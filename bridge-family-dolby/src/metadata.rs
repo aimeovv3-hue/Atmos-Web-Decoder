@@ -50,6 +50,17 @@ pub(crate) fn build_eac3_metadata_frame(
     }
 }
 
+/// An E-AC3 object gain (dB, −∞ for a muted object) as an event's `gain_db`:
+/// −∞ becomes the `i8::MIN` the host mutes on, an object the stream gave no
+/// gain plays at 0 dB.
+fn event_gain_db(gain_db: Option<f32>) -> i8 {
+    match gain_db {
+        Some(db) if db.is_finite() => db.round().clamp(-127.0, 127.0) as i8,
+        Some(db) if db == f32::NEG_INFINITY => i8::MIN,
+        _ => 0,
+    }
+}
+
 /// Convert an E-AC3 OAMD payload into the dynamic-object event list
 /// (`id = 10 + dynamic_idx`, matching the object↔channel declaration).
 fn extract_eac3_events(
@@ -158,7 +169,7 @@ fn extract_eac3_events(
                 sample_pos: base_sample_pos + sample_offset,
                 has_pos,
                 pos,
-                gain_db: block.gain.unwrap_or(0.0) as i8,
+                gain_db: event_gain_db(block.gain_db),
                 size,
                 ramp_duration,
             });
@@ -213,6 +224,53 @@ mod tests {
         assert!(again.object_channels.is_empty());
     }
 
+    /// An object's OAMD gain reaches its event in dB, and a muted object as
+    /// the host's −∞ sentinel rather than at full level.
+    #[test]
+    fn eac3_extract_events_carries_the_object_gain_in_db() {
+        use eac3::{OamdBlockUpdate, OamdElement, OamdElementKind, OamdObjectBlock};
+
+        let gains = [
+            Some(0.0),
+            Some(-6.0),
+            Some(15.0),
+            Some(-49.0),
+            Some(f32::NEG_INFINITY),
+            None,
+        ];
+        let mut payload = empty_oamd_payload();
+        payload.object_count = gains.len();
+        payload.beds = 0;
+        payload.bed_instances = 0;
+        payload.bed_or_isf_objects = 0;
+        payload.dynamic_objects = gains.len();
+        payload.element_count = 1;
+        payload.elements = vec![OamdElement {
+            element_index: 1,
+            byte_length: 0,
+            kind: OamdElementKind::Object(eac3::OamdObjectElement {
+                sample_offset: 0,
+                block_updates: vec![OamdBlockUpdate {
+                    offset: 0,
+                    ramp_duration: 0,
+                }],
+                object_blocks: gains
+                    .iter()
+                    .map(|&gain_db| {
+                        vec![OamdObjectBlock {
+                            gain_db,
+                            ..OamdObjectBlock::default()
+                        }]
+                    })
+                    .collect(),
+            }),
+        }];
+
+        let events = extract_eac3_events(&payload, 0, gains.len());
+        let event_gains: Vec<i8> = events.iter().map(|e| e.gain_db).collect();
+        assert_eq!(event_gains, [0, -6, 15, -49, i8::MIN, 0]);
+    }
+
     /// Anisotropic OAMD size [w, d, h] is preserved end-to-end without any
     /// L2-norm or single-axis collapse.
     #[test]
@@ -229,7 +287,8 @@ mod tests {
             render_info_status: 0,
             render_info_blocks: None,
             anchor: ObjectAnchor::Room,
-            gain: Some(0.0),
+            gain_db: Some(0.0),
+            gain_from_previous_object: false,
             priority: None,
             valid_position: true,
             differential_position: false,
