@@ -19,4 +19,8 @@
 # which the per-family plugins need, and after #787, whose
 # scripts/check_windows_crt_imports.py the Windows static-libopus check
 # imports. bridge_api itself is the 0.6 of #782, unchanged since.
-c821eb346fc62cee472b1ef968deca5170ed5b18
+#
+# TEMPORARY, to move back to a release pin before this merges: the IAMF
+# carrier test (bridge/tests/iamf_carrier.rs) needs spdif 0.1.1, the burst
+# writer of the Omniphony branch below (was c821eb346fc62cee472b1ef968deca5170ed5b18).
+feat/iec61937-iamf

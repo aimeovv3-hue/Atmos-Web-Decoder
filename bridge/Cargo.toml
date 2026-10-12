@@ -50,5 +50,6 @@ log = "0.4"
 serde_json = "1.0.142"
 # Its EXAMPLE_DATA: a TrueHD stream for the family-bridge comparison.
 truehd = { version = "0.7.2" }
-# The IEC 61937 burst parser the live input uses, for `bridge_bench --iec61937`.
-spdif = { version = "0.1.0", path = "../../Omniphony/omniphony-renderer/spdif" }
+# The IEC 61937 burst parser the live input uses, for `bridge_bench --iec61937`,
+# and the IAMF burst writer (0.1.1) for the carrier null test.
+spdif = { version = "0.1.1", path = "../../Omniphony/omniphony-renderer/spdif" }
