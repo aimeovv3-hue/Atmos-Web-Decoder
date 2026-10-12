@@ -1683,6 +1683,85 @@ mod tests {
         assert!(max_diff <= Some(1), "max diff {max_diff:?} (16-bit steps)");
     }
 
+    #[test]
+    fn a_parameter_block_is_timed_from_its_temporal_unit_not_from_the_push() {
+        // Two stereo elements, one muted by a six-unit mix-gain block at
+        // units 1, 13 and 19 of 24: units 7 to 12 have no block, the
+        // default gain lets the element through and the level doubles.
+        // Most temporal delimiters carry IAMF v2.0's `is_not_key_frame`.
+        let (Some(stream), Some(reference)) = (
+            vector("test_000850.iamf"),
+            vector("test_000850_rendered_id_42_sub_mix_0_layout_0.wav"),
+        ) else {
+            eprintln!("skipping: set HARLETTY_IAMF_VECTORS to the libiamf test vectors");
+            return;
+        };
+        const OBU_TEMPORAL_DELIMITER: u8 = 4;
+        const UNIT: usize = 1024;
+        let shipped = std::fs::read(stream).unwrap();
+        // Without its delimiters, and OBU by OBU.
+        let mut stripped = Vec::new();
+        let mut obu_sizes = Vec::new();
+        let mut pos = 0;
+        while let Ok(Some(frame)) = frame_obu(&shipped[pos..]) {
+            if frame.obu_type != OBU_TEMPORAL_DELIMITER {
+                stripped.extend_from_slice(&shipped[pos..pos + frame.len]);
+            }
+            obu_sizes.push(frame.len);
+            pos += frame.len;
+        }
+        assert_eq!(pos, shipped.len(), "the vector frames end to end");
+        assert!(stripped.len() < shipped.len(), "the vector has delimiters");
+
+        let (channels, expected) = read_wav_s16(&reference);
+        assert_eq!(channels, 2);
+        let decode = |stream: &[u8], sizes: &mut dyn Iterator<Item = usize>| {
+            let mut bridge = Harness::new();
+            let mut frames = Vec::new();
+            let mut rest = stream;
+            while !rest.is_empty() {
+                let (packet, after) = rest.split_at(sizes.next().unwrap().min(rest.len()));
+                let result = bridge.push(packet);
+                assert!(result.error_message.is_empty(), "{}", result.error_message);
+                frames.extend(result.frames);
+                rest = after;
+            }
+            assert!(frames.iter().all(|f| f.sample_count as usize == UNIT));
+            interleaved(&frames)
+        };
+        for stream in [&shipped, &stripped] {
+            // Everything at once: every block is parsed before a unit is
+            // pulled, the cut the timelines used to be furthest off on.
+            let whole = decode(stream, &mut std::iter::repeat(usize::MAX));
+            assert_eq!(whole.len(), expected.len());
+            let max_diff = whole
+                .iter()
+                .zip(&expected)
+                .map(|(a, b)| ((a - b).abs() + 128) >> 8)
+                .max();
+            assert!(max_diff <= Some(1), "max diff {max_diff:?} (16-bit steps)");
+            let level = |unit: usize| -> i64 {
+                whole[unit * UNIT * 2..(unit + 1) * UNIT * 2]
+                    .iter()
+                    .map(|s| i64::from(s.abs()))
+                    .sum()
+            };
+            for unit in 0..24 {
+                let doubled = level(unit) > level(0) * 3 / 2;
+                assert_eq!(doubled, (6..12).contains(&unit), "unit {}", unit + 1);
+            }
+            // However the bytes are cut, the samples are the same.
+            for size in [1usize, 997, 4096, 3 * 8200] {
+                let cut = decode(stream, &mut std::iter::repeat(size));
+                assert!(cut == whole, "{size}-byte packets differ");
+            }
+        }
+        // And OBU by OBU: a delimiter or a parameter block alone in its
+        // packet.
+        let by_obu = decode(&shipped, &mut obu_sizes.into_iter());
+        assert!(by_obu == decode(&shipped, &mut std::iter::repeat(usize::MAX)));
+    }
+
     fn events(frames: &[RDecodedFrame]) -> Vec<REvent> {
         frames
             .iter()
