@@ -104,8 +104,9 @@ pub struct OamdObjectBlock {
     pub render_info_blocks: Option<u8>,
     pub anchor: ObjectAnchor,
     /// `object_gain` in dB (ETSI TS 103 420, tables 18 and 19):
-    /// `f32::NEG_INFINITY` is the −∞ dB of `object_gain_idx` 1. `None` until
-    /// the stream has signalled a gain for the object.
+    /// `f32::NEG_INFINITY` is the −∞ dB of `object_gain_idx` 1 and of an
+    /// inactive object (table 28). `None` until the stream has signalled a
+    /// gain for the object.
     pub gain_db: Option<f32>,
     /// `object_gain_idx` 3: the gain is the previous object's in this update
     /// block. A parsed block carries the flag and no `gain_db`; resolving the
@@ -330,8 +331,11 @@ impl OamdObjectElementParseState {
             for (block_index, block) in blocks.iter_mut().enumerate() {
                 if block.gain_from_previous_object {
                     // Objects resolve in order, so the previous object's state
-                    // already holds its gain for this block; the first object
-                    // has no previous one and defaults to 0 dB (table 18).
+                    // already holds its gain for this block, −∞ dB if it is
+                    // inactive; the first object has no previous one and
+                    // defaults to 0 dB (table 18). A previous object that
+                    // reuses a gain the stream never gave it plays at 0 dB,
+                    // and so does the one that takes its gain.
                     let previous = object_index
                         .checked_sub(1)
                         .and_then(|prev| self.object_blocks[prev][block_index].gain_db);
@@ -352,7 +356,11 @@ impl OamdObjectBlockParseState {
         } else {
             parsed.basic_info_status
         };
-        if (basic_info_status & 1) != 0 {
+        if basic_info_status == 0 {
+            // Default values (table 28): an inactive object, like a block that
+            // neither signals nor reuses its basic info, has a gain of −∞ dB.
+            self.gain_db = Some(f32::NEG_INFINITY);
+        } else if (basic_info_status & 1) != 0 {
             let blocks = parsed
                 .basic_info_blocks
                 .unwrap_or(if basic_info_status == 1 { 3 } else { 0 });
@@ -2076,16 +2084,8 @@ mod tests {
         let mut state = MetadataParseState::default();
         state.oamd.resolve_payload(&mut payload);
 
-        let OamdElementKind::Object(object) = &payload.elements[0].kind else {
-            panic!("expected object element");
-        };
-        let gains: Vec<_> = object
-            .object_blocks
-            .iter()
-            .map(|blocks| blocks[0].gain_db)
-            .collect();
         assert_eq!(
-            gains,
+            first_block_gains(&payload),
             [
                 Some(0.0), // first object: no previous one, 0 dB
                 Some(-6.0),
@@ -2095,6 +2095,49 @@ mod tests {
                 Some(f32::NEG_INFINITY),
             ]
         );
+    }
+
+    fn first_block_gains(payload: &OamdPayload) -> Vec<Option<f32>> {
+        let OamdElementKind::Object(object) = &payload.elements[0].kind else {
+            panic!("expected object element");
+        };
+        object
+            .object_blocks
+            .iter()
+            .map(|blocks| blocks[0].gain_db)
+            .collect()
+    }
+
+    #[test]
+    fn an_inactive_object_has_a_gain_of_minus_infinity_and_hands_it_on() {
+        let signalled = |gain_db: Option<f32>| OamdObjectBlock {
+            basic_info_status: 1,
+            basic_info_blocks: Some(3),
+            gain_db,
+            gain_from_previous_object: gain_db.is_none(),
+            ..OamdObjectBlock::default()
+        };
+        let inactive = || OamdObjectBlock {
+            inactive: true,
+            ..OamdObjectBlock::default()
+        };
+        let mut state = MetadataParseState::default();
+
+        // Inactive from the first frame: the next object takes −∞, not 0 dB.
+        let mut first = payload_with_object_blocks(vec![vec![inactive()], vec![signalled(None)]]);
+        state.oamd.resolve_payload(&mut first);
+        assert_eq!(first_block_gains(&first), [Some(f32::NEG_INFINITY); 2]);
+
+        // Active at +6 dB, then inactive: the next object takes −∞, not the
+        // +6 dB of the frame before.
+        let mut active =
+            payload_with_object_blocks(vec![vec![signalled(Some(6.0))], vec![signalled(None)]]);
+        state.oamd.resolve_payload(&mut active);
+        assert_eq!(first_block_gains(&active), [Some(6.0); 2]);
+        let mut silenced =
+            payload_with_object_blocks(vec![vec![inactive()], vec![signalled(None)]]);
+        state.oamd.resolve_payload(&mut silenced);
+        assert_eq!(first_block_gains(&silenced), [Some(f32::NEG_INFINITY); 2]);
     }
 
     fn second_block(payload: &OamdPayload) -> &OamdObjectBlock {
@@ -2134,7 +2177,7 @@ mod tests {
         let mut omitted = payload_with_object_blocks(vec![vec![
             OamdObjectBlock::default(),
             OamdObjectBlock {
-                basic_info_status: 0,
+                basic_info_status: 2,
                 render_info_status: 0,
                 ..OamdObjectBlock::default()
             },
@@ -2187,7 +2230,7 @@ mod tests {
         let mut second = payload_with_object_blocks(vec![vec![
             OamdObjectBlock::default(),
             OamdObjectBlock {
-                basic_info_status: 0,
+                basic_info_status: 2,
                 render_info_status: 3,
                 render_info_blocks: Some(4),
                 size: Some([0.75, 0.75, 0.75]),
