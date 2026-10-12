@@ -21,6 +21,6 @@ log = "0.4"
 # agree, renders the expanded loudspeaker layouts (9.1.6, 10.2.9.3, 7.1.5.4
 # and their subsets), and hands a channel-based element out in its own
 # layout (the dialogue element, tagged for the renderer).
-iamf-obu = { git = "https://github.com/harletty/iamf-rs", rev = "50133c74284d9cbe43a73b5ad962df5f0ae6f16b" }
-iamf-dec = { git = "https://github.com/harletty/iamf-rs", rev = "50133c74284d9cbe43a73b5ad962df5f0ae6f16b", default-features = false }
-iamf-codecs = { git = "https://github.com/harletty/iamf-rs", rev = "50133c74284d9cbe43a73b5ad962df5f0ae6f16b", default-features = false, features = ["pcm", "flac", "aac", "opus-ffi"] }
+iamf-obu = { git = "https://github.com/harletty/iamf-rs", rev = "7515932385ff114dabae4eaf832748a70327e794" }
+iamf-dec = { git = "https://github.com/harletty/iamf-rs", rev = "7515932385ff114dabae4eaf832748a70327e794", default-features = false }
+iamf-codecs = { git = "https://github.com/harletty/iamf-rs", rev = "7515932385ff114dabae4eaf832748a70327e794", default-features = false, features = ["pcm", "flac", "aac", "opus-ffi"] }
