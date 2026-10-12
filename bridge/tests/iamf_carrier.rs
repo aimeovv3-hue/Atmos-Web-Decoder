@@ -256,3 +256,128 @@ fn a_damaged_burst_costs_its_unit_only() {
         }
     }
 }
+
+fn vector_sequence(name: &str) -> Option<IamfSequence> {
+    let dir = std::env::var_os("HARLETTY_IAMF_VECTORS").or_else(|| {
+        eprintln!("skipping: set HARLETTY_IAMF_VECTORS to the libiamf test vectors");
+        None
+    })?;
+    let stream = std::fs::read(std::path::Path::new(&dir).join(name)).unwrap();
+    Some(IamfSequence::parse(&stream).unwrap())
+}
+
+/// `unit` short of its last OBU: whole OBUs still, of an incomplete unit.
+fn without_last_obu(unit: &[u8]) -> &[u8] {
+    let (mut pos, mut last) = (0, 0);
+    while let Ok(Some(obu)) = bridge_family_iamf::frame_obu(&unit[pos..]) {
+        last = pos;
+        pos += obu.len;
+    }
+    &unit[..last]
+}
+
+/// Push bursts and collect each one's samples.
+fn burst_samples(bridge: &mut bridge_api::FormatBridgeBox, bursts: &[Vec<u8>]) -> Vec<Vec<i32>> {
+    bursts
+        .iter()
+        .map(|payload| {
+            let result = bridge.push_packet(
+                RSlice::from_slice(payload),
+                RInputTransport::Iec61937,
+                spdif::DATA_TYPE_IAMF_PRIVATE,
+            );
+            assert!(result.error_message.is_empty(), "{}", result.error_message);
+            result
+                .frames
+                .iter()
+                .flat_map(|f| f.pcm.iter().copied())
+                .collect()
+        })
+        .collect()
+}
+
+/// The intact decode of a sequence, a burst to a unit, the descriptors
+/// leading the first.
+fn intact_units(sequence: &IamfSequence) -> Vec<Vec<i32>> {
+    let mut bursts = sequence.units.clone();
+    bursts[0] = [sequence.descriptors.as_slice(), &sequence.units[0]].concat();
+    burst_samples(&mut harletty_bridge::new_bridge(false), &bursts)
+}
+
+/// The burst that opens a sequence is damaged: its unit is lost, its
+/// descriptors are not. A sender need not repeat them (mpv with
+/// `--ad-iamf-iec61937-copy-interval=0`), so dropping them with the unit
+/// would silence the stream until the next seek.
+#[test]
+fn a_damaged_opening_burst_still_opens_the_sequence() {
+    // LPCM 5.1: four substreams to a unit.
+    let Some(sequence) = vector_sequence("test_000038.iamf") else {
+        return;
+    };
+    let intact = intact_units(&sequence);
+    for whole_obu in [false, true] {
+        let unit = &sequence.units[0];
+        let cut = if whole_obu {
+            without_last_obu(unit)
+        } else {
+            &unit[..unit.len() - 1]
+        };
+        let mut bursts = sequence.units.clone();
+        bursts[0] = [sequence.descriptors.as_slice(), cut].concat();
+        let hurt = burst_samples(&mut harletty_bridge::new_bridge(false), &bursts);
+        assert!(hurt[0].is_empty(), "the damaged unit is not heard");
+        assert_eq!(hurt[1..], intact[1..], "whole OBU lost: {whole_obu}");
+    }
+}
+
+/// The descriptors may come in a burst of their own. The first unit after
+/// them is checked against them like any other: no decoder exists yet, but
+/// the sequence is known.
+#[test]
+fn the_first_unit_after_descriptors_alone_is_checked() {
+    let Some(sequence) = vector_sequence("test_000038.iamf") else {
+        return;
+    };
+    let intact = intact_units(&sequence);
+    let mut bursts = vec![sequence.descriptors.clone()];
+    bursts.push(without_last_obu(&sequence.units[0]).to_vec());
+    bursts.extend_from_slice(&sequence.units[1..]);
+    let hurt = burst_samples(&mut harletty_bridge::new_bridge(false), &bursts);
+    assert!(hurt[0].is_empty() && hurt[1].is_empty());
+    assert_eq!(hurt[2..], intact[1..]);
+
+    // Intact, the same shape decodes as the stream.
+    let mut bursts = vec![sequence.descriptors.clone()];
+    bursts.extend_from_slice(&sequence.units);
+    let whole = burst_samples(&mut harletty_bridge::new_bridge(false), &bursts);
+    assert_eq!(whole[1..], intact[..]);
+}
+
+/// A sender may lead the burst that changes sequence with its copy of the
+/// old one's descriptors. The unit belongs to the sequence the last
+/// non-redundant header opens, not to the one the copy repeats.
+#[test]
+fn a_new_sequence_led_by_a_copy_of_the_old_is_the_new_one() {
+    // Four substreams, then one.
+    let (Some(old), Some(new)) = (
+        vector_sequence("test_000038.iamf"),
+        vector_sequence("test_000800.iamf"),
+    ) else {
+        return;
+    };
+    let intact_new = intact_units(&new);
+    let mut bursts = old.units[..6].to_vec();
+    bursts[0] = [old.descriptors.as_slice(), &old.units[0]].concat();
+    bursts.push(
+        [
+            old.redundant_descriptors().as_slice(),
+            &new.descriptors,
+            &new.units[0],
+        ]
+        .concat(),
+    );
+    bursts.extend_from_slice(&new.units[1..]);
+    let heard = burst_samples(&mut harletty_bridge::new_bridge(false), &bursts);
+    assert!(heard[..6].iter().all(|unit| !unit.is_empty()));
+    assert_eq!(heard[6..], intact_new[..]);
+}

@@ -7,8 +7,10 @@
 //   byte 0      bit 0     transport: 0 raw, 1 IEC 61937
 //               bits 1-3  raw: the declared codec (`input_codec`), auto first;
 //                         IEC 61937: the burst data type, from DATA_TYPES
+//                         (with bit 7, which reaches past its first eight)
 //               bits 4-5  the DRC mode, from the bridge's own list
 //               bit 6     a host reset (a seek) halfway through the packets
+//               bit 7     IEC 61937: the high bit of the data type's index
 //   bytes 1-2   packet size, little-endian; 0 hands the rest over as one
 //   rest        the stream, cut into packets of that size
 //
@@ -32,9 +34,9 @@ const CODECS: [&str; 8] = [
     "auto", "eac3", "truehd", "dts", "iamf", "ac3", "mlp", "dtshd",
 ];
 
-/// AC-3, E-AC-3, TrueHD in MAT, DTS types I/II/III and DTS-HD, and one data
-/// type no family takes.
-const DATA_TYPES: [u8; 8] = [0x01, 0x15, 0x16, 0x0B, 0x0C, 0x0D, 0x11, 0x1D];
+/// AC-3, E-AC-3, TrueHD in MAT, DTS types I/II/III and DTS-HD, one data type
+/// no family takes (0x07), and IAMF's private one.
+const DATA_TYPES: [u8; 9] = [0x01, 0x15, 0x16, 0x0B, 0x0C, 0x0D, 0x11, 0x07, 0x1D];
 
 extern "C" fn discard_log(_level: RLogLevel, _target: RStr<'_>, _message: RStr<'_>) {}
 
@@ -52,7 +54,11 @@ fuzz_target!(|data: &[u8]| {
     let (transport, data_type) = if mode & 1 == 0 {
         (RInputTransport::Raw, 0)
     } else {
-        (RInputTransport::Iec61937, DATA_TYPES[selector])
+        let index = selector | usize::from(mode >> 7) << 3;
+        (
+            RInputTransport::Iec61937,
+            DATA_TYPES[index % DATA_TYPES.len()],
+        )
     };
     let packet_size = match usize::from(u16::from_le_bytes([*size_lo, *size_hi])) {
         0 => stream.len().max(1),

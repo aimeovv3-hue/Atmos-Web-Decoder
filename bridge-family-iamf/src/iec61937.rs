@@ -9,13 +9,17 @@
 //! without the flag starts a new sequence, as on the raw transport.
 //!
 //! Unlike a raw stream, a burst is a resync point: one damaged on the
-//! carrier costs its own unit and no other. So none of a damaged burst is
+//! carrier costs its own unit and no other. So no audio of a damaged burst is
 //! decoded. A substream decoded from the part that survived would wait in
 //! the decoder for the rest of its unit and be matched with the next
 //! unit's, shifting every unit after it. A burst is damaged when it is not
 //! whole OBUs, or when its audio frames are not one for each substream of
 //! the sequence, which is what a temporal unit is: a burst that lost exactly
 //! its last OBU is still whole OBUs.
+//!
+//! The descriptors a damaged burst leads with are taken all the same: they
+//! framed, and a receiver left without them would decode nothing until the
+//! next copy, which a sender need not repeat.
 
 use bridge_api::RPushResult;
 use bridge_common::logging::bridge_log;
@@ -84,51 +88,93 @@ enum Damage {
     Unit,
 }
 
+/// What [`check`] made of a burst.
+struct Checked {
+    /// Where the descriptors the burst leads with end: whole OBUs, whatever
+    /// became of what follows them.
+    lead: usize,
+    verdict: Result<(), Damage>,
+}
+
 /// Whether `payload` crossed the carrier intact, as far as can be told:
 /// whole OBUs, and one audio frame for each substream of the sequence they
-/// belong to — the one the burst opens with its own descriptors, or else the
-/// one that is open. A burst without audio frames (descriptors alone) and
-/// one for which no sequence is known are taken as they are.
-fn check(state: &mut IamfState, payload: &[u8]) -> Result<(), Damage> {
+/// belong to. That sequence is the one the burst's own descriptors open
+/// (from its last sequence header that opens one: a sender may lead a new
+/// sequence with its copy of the old), else the one that is open, else the
+/// one whose descriptors came in a burst of their own and wait for their
+/// first unit. A burst without audio frames and one for which no sequence
+/// is known are taken as they are.
+fn check(state: &mut IamfState, payload: &[u8]) -> Checked {
     let mut pos = 0;
-    // Where the burst's leading descriptors end, and whether they open a
-    // sequence here: they do unless a sequence is open and they are a copy.
     let mut lead = 0;
-    let mut opens = false;
+    // The sequence header the unit's sequence starts at, when the burst
+    // opens one: a header that is not a copy, or a copy while none is open.
+    let mut opens_at = None;
     let mut audio = 0usize;
     while pos < payload.len() {
         let obu = match frame_obu(&payload[pos..]) {
             Ok(Some(obu)) => obu,
-            Ok(None) | Err(_) => return Err(Damage::Framing),
+            Ok(None) | Err(_) => {
+                return Checked {
+                    lead,
+                    verdict: Err(Damage::Framing),
+                };
+            }
         };
         match obu_kind(obu.obu_type) {
-            ObuKind::SequenceHeader if audio == 0 => {
-                opens = !(obu.redundant && state.has_sequence());
+            ObuKind::SequenceHeader if lead == pos => {
+                if !obu.redundant || !(state.has_sequence() || opens_at.is_some()) {
+                    opens_at = Some(pos);
+                }
                 lead = pos + obu.len;
             }
-            ObuKind::Descriptor if audio == 0 && lead == pos => lead = pos + obu.len,
+            ObuKind::Descriptor if lead == pos => lead = pos + obu.len,
             _ if (OBU_AUDIO_FRAME..=OBU_AUDIO_FRAME_ID17).contains(&obu.obu_type) => audio += 1,
             _ => {}
         }
         pos += obu.len;
     }
+    Checked {
+        lead,
+        verdict: whole_unit(state, payload, lead, opens_at, audio),
+    }
+}
+
+/// The second half of [`check`], on a payload that is whole OBUs with
+/// `audio` audio frames after its `lead`.
+fn whole_unit(
+    state: &mut IamfState,
+    payload: &[u8],
+    lead: usize,
+    opens_at: Option<usize>,
+    audio: usize,
+) -> Result<(), Damage> {
     if audio == 0 {
         return Ok(());
     }
-    // The sequence the unit belongs to. Parsing the descriptors happens on
-    // the bursts that open one, not on every burst.
-    let opened;
-    let expected: &[u32] = if opens {
-        match Descriptors::collect(&payload[..lead]) {
+    // Descriptors are parsed on the bursts that open a sequence and until
+    // its first unit, not on every burst: after that the list is the
+    // state's.
+    let parsed_here;
+    let expected: &[u32] = if let Some(at) = opens_at {
+        match Descriptors::collect(&payload[at..lead]) {
             Ok(parsed) => {
-                opened = crate::sequence_substreams(&parsed);
-                &opened
+                parsed_here = crate::sequence_substreams(&parsed);
+                &parsed_here
             }
             // Not a sequence the decoder will open: its refusal says why.
             Err(_) => return Ok(()),
         }
     } else if state.has_sequence() {
         &state.substreams
+    } else if !state.descriptors.is_empty() && !state.refused {
+        match Descriptors::collect(&state.descriptors) {
+            Ok(parsed) => {
+                parsed_here = crate::sequence_substreams(&parsed);
+                &parsed_here
+            }
+            Err(_) => return Ok(()),
+        }
     } else {
         return Ok(());
     };
@@ -140,7 +186,7 @@ fn check(state: &mut IamfState, payload: &[u8]) -> Result<(), Damage> {
     seen.resize(expected.len(), false);
     let mut pos = lead;
     while pos < payload.len() {
-        // Framed above.
+        // Framed by the caller.
         let Ok(Some(obu)) = frame_obu(&payload[pos..]) else {
             return Err(Damage::Framing);
         };
@@ -159,7 +205,8 @@ fn check(state: &mut IamfState, payload: &[u8]) -> Result<(), Damage> {
 }
 
 /// Decode one burst payload: a whole temporal unit, nothing carried over
-/// from the burst before. A damaged one is dropped whole.
+/// from the burst before. Of a damaged one only the descriptors it leads
+/// with are taken.
 pub fn push_burst(
     state: &mut IamfState,
     shared: &mut SharedState,
@@ -168,21 +215,25 @@ pub fn push_burst(
 ) -> AfterPush {
     // A burst never continues the one before.
     state.buf.clear();
-    if let Err(damage) = check(state, payload) {
-        if let Some(bursts) = state.truncated_bursts.note() {
-            bridge_log!(
-                log::Level::Warn,
-                "iamf: IEC 61937 burst dropped, {} ({} byte(s), {bursts} burst(s) so far)",
-                match damage {
-                    Damage::Framing => "not whole OBUs",
-                    Damage::Unit => "not a whole temporal unit",
-                },
-                payload.len()
-            );
-        }
+    let checked = check(state, payload);
+    let Err(damage) = checked.verdict else {
+        return push_iamf(state, shared, payload, result);
+    };
+    if let Some(bursts) = state.truncated_bursts.note() {
+        bridge_log!(
+            log::Level::Warn,
+            "iamf: IEC 61937 burst dropped, {} ({} byte(s), {bursts} burst(s) so far)",
+            match damage {
+                Damage::Framing => "not whole OBUs",
+                Damage::Unit => "not a whole temporal unit",
+            },
+            payload.len()
+        );
+    }
+    if checked.lead == 0 {
         return AfterPush::Continue;
     }
-    push_iamf(state, shared, payload, result)
+    push_iamf(state, shared, &payload[..checked.lead], result)
 }
 
 #[cfg(test)]
@@ -328,15 +379,18 @@ mod tests {
         assert!(raw.state.descriptors.is_empty());
     }
 
-    /// None of a damaged burst is decoded, the OBUs that still frame
-    /// included: they are part of a unit the rest of which is lost.
+    /// The audio of a damaged burst is dropped, the frames that still frame
+    /// included: they are part of a unit the rest of which is lost. The
+    /// descriptors it leads with are taken: without them a receiver has no
+    /// sequence until the next copy, which may never come.
     #[test]
-    fn the_whole_obus_of_a_damaged_burst_are_dropped_with_it() {
+    fn a_damaged_burst_keeps_the_descriptors_it_leads_with() {
         let mut bridge = Harness::new();
         let mut damaged = HEADER.to_vec();
         damaged.extend_from_slice(&[6 << 3, 100, 0xAA, 0xBB, 0xCC]);
         bridge.burst(&damaged);
-        assert!(bridge.state.descriptors.is_empty());
+        assert_eq!(bridge.state.descriptors, HEADER);
+        assert!(bridge.state.buf.is_empty());
         assert_eq!(bridge.state.truncated_bursts.count(), 1);
         // An OBU size that does not end is damage as well.
         bridge.burst(&[6 << 3, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00]);
@@ -367,17 +421,21 @@ mod tests {
         let mut bridge = Harness::new();
         let mut payload = HEADER.to_vec();
         payload.extend_from_slice(&[6 << 3, 0x02, 0xAB, 0xCD]);
-        assert_eq!(check(&mut bridge.state, &payload), Err(Damage::Unit));
+        assert_eq!(
+            check(&mut bridge.state, &payload).verdict,
+            Err(Damage::Unit)
+        );
+        assert_eq!(check(&mut bridge.state, &payload).lead, HEADER.len());
         // The descriptors alone are a burst like any other.
-        assert_eq!(check(&mut bridge.state, &HEADER), Ok(()));
+        assert_eq!(check(&mut bridge.state, &HEADER).verdict, Ok(()));
         // Without a sequence nothing says what a unit is: the framer drops
         // the data as it does raw.
         assert_eq!(
-            check(&mut bridge.state, &[6 << 3, 0x02, 0xAB, 0xCD]),
+            check(&mut bridge.state, &[6 << 3, 0x02, 0xAB, 0xCD]).verdict,
             Ok(())
         );
         assert_eq!(
-            check(&mut bridge.state, &[6 << 3, 0x09, 0xAB]),
+            check(&mut bridge.state, &[6 << 3, 0x09, 0xAB]).verdict,
             Err(Damage::Framing)
         );
     }
