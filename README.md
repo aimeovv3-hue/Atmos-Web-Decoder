@@ -304,7 +304,12 @@ makes it a bridge library:
 |---|---|---|---|
 | `harletty-dolby-bridge` | `harletty_dolby_bridge` | TrueHD (raw and MAT), E-AC-3 / AC-3 with JOC objects | 0x01, 0x15, 0x16 |
 | `harletty-dts-bridge` | `harletty_dts_bridge` | DTS, DTS-HD, DTS:X, Auro-3D over DTS-HD MA | 0x0B–0x0D, 0x11 |
-| `harletty-iamf-bridge` | `harletty_iamf_bridge` | IAMF (Eclipsa Audio) | none |
+| `harletty-iamf-bridge` | `harletty_iamf_bridge` | IAMF (Eclipsa Audio) | 0x1D (private, see below) |
+
+IAMF has no IEC 61937 data type of its own. `0x1D` is a private one, for a
+sender and a receiver that are both Omniphony's: a burst carries the OBUs of
+one temporal unit, with a redundant copy of the descriptors now and then
+(Omniphony `docs/iamf-transport-plan.md`). No other equipment decodes it.
 
 Build any of them on its own, e.g. `cargo build --release -p
 harletty-iamf-bridge`. A plugin's crate graph holds its own family's

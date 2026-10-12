@@ -44,10 +44,11 @@ use iamf_obu::descriptors::PositionKind;
 use iamf_obu::descriptors::{AudioElementConfig, CodecId, ElementGainOffset};
 
 use bridge_common::frame_builders::float_to_pcm_i32;
-use bridge_common::logging::{bridge_diag_log, bridge_log, panic_message};
+use bridge_common::logging::{RepeatCounter, bridge_diag_log, bridge_log, panic_message};
 use bridge_common::shared::{AfterPush, SharedState};
 
 mod family;
+pub mod iec61937;
 pub mod probe;
 pub use family::{FAMILY_IAMF, IamfCodec, IamfPipeline};
 
@@ -345,6 +346,9 @@ pub struct IamfState {
     objects: ObjectState,
     /// The mix's dialogue element, handed out beside the bed.
     dialogue: Option<Dialogue>,
+    /// IEC 61937 bursts that ended inside an OBU since the last reset: only
+    /// the 1st, 2nd, 4th... are logged.
+    truncated_bursts: RepeatCounter,
 }
 
 /// A dialogue element the decoder hands out rather than renders.
@@ -396,6 +400,7 @@ impl IamfState {
     pub fn reset(&mut self) {
         self.buf.clear();
         self.frame_count = 0;
+        self.truncated_bursts = RepeatCounter::default();
         // The renderer forgets the objects on a reset: declare them again.
         self.objects = ObjectState::default();
         if let Some(decoder) = &mut self.decoder {

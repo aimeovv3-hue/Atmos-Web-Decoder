@@ -34,7 +34,7 @@ const CODECS: [&str; 8] = [
 
 /// AC-3, E-AC-3, TrueHD in MAT, DTS types I/II/III and DTS-HD, and one data
 /// type no family takes.
-const DATA_TYPES: [u8; 8] = [0x01, 0x15, 0x16, 0x0B, 0x0C, 0x0D, 0x11, 0x07];
+const DATA_TYPES: [u8; 8] = [0x01, 0x15, 0x16, 0x0B, 0x0C, 0x0D, 0x11, 0x1D];
 
 extern "C" fn discard_log(_level: RLogLevel, _target: RStr<'_>, _message: RStr<'_>) {}
 

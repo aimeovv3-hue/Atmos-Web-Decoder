@@ -165,6 +165,10 @@ fn accepts_data_type(data_type: u8) -> bool {
     if bridge_family_dts::accepts_data_type(data_type) {
         return true;
     }
+    #[cfg(feature = "iamf")]
+    if crate::iamf_pipeline::iec61937::accepts_data_type(data_type) {
+        return true;
+    }
     let _ = data_type;
     false
 }
@@ -349,7 +353,7 @@ impl FamilyPipeline for Families {
     }
 
     fn enter_iec61937(&mut self) {
-        // IAMF has no IEC 61937 data type: it only comes raw.
+        // Until the burst proves to be IAMF's private type.
         self.iamf_active = false;
     }
 
@@ -375,6 +379,23 @@ impl FamilyPipeline for Families {
             #[cfg(test)]
             injected_panic::hit(RawCodec::Dts);
             return self.dts.push_iec61937(shared, data, data_type, result);
+        }
+
+        // ── IAMF (private data type 0x1D) ─────────────────────────────
+        #[cfg(feature = "iamf")]
+        if crate::iamf_pipeline::iec61937::accepts_data_type(data_type) {
+            #[cfg(feature = "dolby")]
+            self.dolby.leave();
+            self.dts_active = false;
+            self.iamf_active = true;
+            #[cfg(test)]
+            injected_panic::hit(RawCodec::Iamf);
+            return crate::iamf_pipeline::iec61937::push_burst(
+                &mut self.iamf,
+                shared,
+                data,
+                result,
+            );
         }
 
         // Only called for a type `accepts_data_type` takes.
@@ -614,6 +635,11 @@ mod raw_transport_tests {
             built(dts_built)
         );
         assert_eq!(verdict(&[], RInputTransport::Iec61937, 0x07), Nothing);
+        // IAMF's private burst type.
+        assert_eq!(
+            verdict(&[], RInputTransport::Iec61937, 0x1D),
+            built(cfg!(feature = "iamf"))
+        );
     }
 
     /// Every codec name the router lists is one `configure` takes.
