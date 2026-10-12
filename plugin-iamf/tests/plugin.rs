@@ -5,7 +5,7 @@ use harletty_iamf_bridge as PLUGIN;
 const PRIMARY_CODECS: &[&str] = &["iamf"];
 const FOREIGN_CODECS: &[&str] = &["truehd", "eac3", "dts"];
 const FAMILIES: &[&str] = &["iamf"];
-const BURST_TYPES: &[u8] = &[];
+const BURST_TYPES: &[u8] = &[0x1D];
 
 use abi_stable::std_types::RSlice;
 use bridge_api::{BridgeLibRef, RInputTransport, RProbe, RProbeVerdict};

@@ -44,10 +44,11 @@ use iamf_obu::descriptors::PositionKind;
 use iamf_obu::descriptors::{AudioElementConfig, CodecId, ElementGainOffset};
 
 use bridge_common::frame_builders::float_to_pcm_i32;
-use bridge_common::logging::{bridge_diag_log, bridge_log, panic_message};
+use bridge_common::logging::{RepeatCounter, bridge_diag_log, bridge_log, panic_message};
 use bridge_common::shared::{AfterPush, SharedState};
 
 mod family;
+pub mod iec61937;
 pub mod probe;
 pub use family::{FAMILY_IAMF, IamfCodec, IamfPipeline};
 
@@ -292,6 +293,16 @@ pub fn frame_obu(data: &[u8]) -> Result<Option<ObuFrame>, String> {
     }))
 }
 
+/// Every audio substream a sequence's temporal units carry: those of all
+/// its audio elements, whichever the selected mix plays.
+fn sequence_substreams(descriptors: &Descriptors) -> Vec<u32> {
+    descriptors
+        .audio_elements
+        .iter()
+        .flat_map(|element| element.substream_ids.iter().copied())
+        .collect()
+}
+
 /// A [`StreamDecoder`] the bridge can hold: `FormatBridge` is `Send + Sync`,
 /// and the decoder is neither only because its codec decoders sit behind
 /// `Box<dyn SubstreamDecoder>`, a trait without a `Send` bound.
@@ -345,6 +356,16 @@ pub struct IamfState {
     objects: ObjectState,
     /// The mix's dialogue element, handed out beside the bed.
     dialogue: Option<Dialogue>,
+    /// IEC 61937 bursts dropped as damaged since the last reset (not whole
+    /// OBUs, or not a whole temporal unit): only the 1st, 2nd, 4th... are
+    /// logged.
+    truncated_bursts: RepeatCounter,
+    /// Every audio substream of the open sequence, over all its audio
+    /// elements: what a whole temporal unit has one audio frame of.
+    substreams: Vec<u32>,
+    /// Scratch for [`iec61937`]: the substreams a burst's unit has, by
+    /// index into `substreams`.
+    unit_substreams: Vec<bool>,
 }
 
 /// A dialogue element the decoder hands out rather than renders.
@@ -396,6 +417,7 @@ impl IamfState {
     pub fn reset(&mut self) {
         self.buf.clear();
         self.frame_count = 0;
+        self.truncated_bursts = RepeatCounter::default();
         // The renderer forgets the objects on a reset: declare them again.
         self.objects = ObjectState::default();
         if let Some(decoder) = &mut self.decoder {
@@ -541,8 +563,11 @@ impl IamfState {
         // when it is not 7.1.4.
         let mut decoder = build(Bed::Bed714, MixSelection::Auto)?;
         let (mix_id, _) = decoder.selected_mix();
-        let bed = Descriptors::collect(&self.descriptors)
-            .map_or(Bed::Bed714, |parsed| Bed::for_mix(&parsed, mix_id));
+        let parsed = Descriptors::collect(&self.descriptors).ok();
+        let bed = parsed
+            .as_ref()
+            .map_or(Bed::Bed714, |parsed| Bed::for_mix(parsed, mix_id));
+        self.substreams = parsed.as_ref().map(sequence_substreams).unwrap_or_default();
         if bed != Bed::Bed714 {
             decoder = build(bed, MixSelection::ById(mix_id))?;
         }
@@ -611,6 +636,7 @@ impl IamfState {
         self.decoder = None;
         self.dialogue = None;
         self.reached.clear();
+        self.substreams.clear();
         Ok(())
     }
 

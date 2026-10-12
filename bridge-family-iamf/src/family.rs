@@ -12,7 +12,8 @@ use crate::{IamfState, push_iamf};
 /// The source family IAMF streams report.
 pub const FAMILY_IAMF: &str = "iamf";
 
-/// The family's one codec: IAMF comes raw only, as an OBU stream.
+/// The family's one codec. Raw, it is an OBU stream; on IEC 61937 it is the
+/// private burst type of [`crate::iec61937`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IamfCodec {
     Iamf,
@@ -73,19 +74,19 @@ impl FamilyPipeline for IamfPipeline {
         }
     }
 
-    /// IAMF has no IEC 61937 data type.
-    fn accepts_data_type(_data_type: u8) -> bool {
-        false
+    /// The private burst type of [`crate::iec61937`].
+    fn accepts_data_type(data_type: u8) -> bool {
+        crate::iec61937::accepts_data_type(data_type)
     }
 
     fn push_iec61937(
         &mut self,
-        _shared: &mut SharedState,
-        _data: &[u8],
+        shared: &mut SharedState,
+        data: &[u8],
         _data_type: u8,
-        _out: &mut RPushResult,
+        out: &mut RPushResult,
     ) -> AfterPush {
-        AfterPush::Continue
+        crate::iec61937::push_burst(&mut self.state, shared, data, out)
     }
 
     /// The stream position goes, the sequence's configuration stays, so
