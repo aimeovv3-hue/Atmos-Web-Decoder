@@ -346,7 +346,7 @@ pub struct IamfState {
     objects: ObjectState,
     /// The mix's dialogue element, handed out beside the bed.
     dialogue: Option<Dialogue>,
-    /// IEC 61937 bursts that ended inside an OBU since the last reset: only
+    /// IEC 61937 bursts that were not whole OBUs since the last reset: only
     /// the 1st, 2nd, 4th... are logged.
     truncated_bursts: RepeatCounter,
 }

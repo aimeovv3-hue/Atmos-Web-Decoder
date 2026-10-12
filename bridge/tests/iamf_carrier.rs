@@ -182,3 +182,61 @@ fn a_late_receiver_locks_on_the_next_copy() {
         "locked at the first copy after joining"
     );
 }
+
+/// A damaged burst costs its own unit and no other. In a unit of several
+/// substreams, the OBUs of a truncated burst that still frame must not be
+/// decoded: their substreams would wait in the decoder for the rest of
+/// their unit and be matched with the next one's, shifting every unit after.
+#[test]
+fn a_damaged_burst_costs_its_unit_only() {
+    let Some(dir) = std::env::var_os("HARLETTY_IAMF_VECTORS") else {
+        eprintln!("skipping: set HARLETTY_IAMF_VECTORS to the libiamf test vectors");
+        return;
+    };
+    // LPCM 5.1: four substreams to a unit.
+    let stream = std::fs::read(std::path::Path::new(&dir).join("test_000038.iamf")).unwrap();
+    let sequence = IamfSequence::parse(&stream).unwrap();
+    assert!(sequence.units.len() > 12);
+
+    let decode = |damaged: Option<usize>| -> Vec<Vec<i32>> {
+        let mut bridge = harletty_bridge::new_bridge(false);
+        let mut units = Vec::new();
+        for (index, unit) in sequence.units.iter().enumerate() {
+            let mut payload = if index == 0 {
+                sequence.descriptors.clone()
+            } else {
+                Vec::new()
+            };
+            payload.extend_from_slice(unit);
+            if damaged == Some(index) {
+                // Its last byte lost: the last OBU no longer frames, the
+                // ones before it still do.
+                payload.pop();
+            }
+            let result = bridge.push_packet(
+                RSlice::from_slice(&payload),
+                RInputTransport::Iec61937,
+                spdif::DATA_TYPE_IAMF_PRIVATE,
+            );
+            assert!(result.error_message.is_empty(), "{}", result.error_message);
+            units.push(
+                result
+                    .frames
+                    .iter()
+                    .flat_map(|f| f.pcm.iter().copied())
+                    .collect(),
+            );
+        }
+        units
+    };
+
+    let intact = decode(None);
+    assert!(intact.iter().all(|unit| !unit.is_empty()));
+    let hurt = decode(Some(5));
+    assert!(hurt[5].is_empty(), "the damaged unit is not heard");
+    for (index, (ours, reference)) in hurt.iter().zip(&intact).enumerate() {
+        if index != 5 {
+            assert_eq!(ours, reference, "unit {index}");
+        }
+    }
+}

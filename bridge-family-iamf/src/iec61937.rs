@@ -8,15 +8,17 @@
 //! joins mid-stream opens the sequence at the next copy. A sequence header
 //! without the flag starts a new sequence, as on the raw transport.
 //!
-//! Unlike a raw stream, a burst is a resync point: whatever a damaged burst
-//! left unframed is dropped when the next one arrives, instead of swallowing
-//! it.
+//! Unlike a raw stream, a burst is a resync point. A burst that is not whole
+//! OBUs was damaged on the carrier, and none of it is decoded: the OBUs that
+//! do frame are part of a temporal unit the rest of which is lost, and a
+//! substream decoded from them would wait in the decoder to be matched with
+//! the next unit's, shifting every unit after it.
 
 use bridge_api::RPushResult;
 use bridge_common::logging::bridge_log;
 use bridge_common::shared::{AfterPush, SharedState};
 
-use crate::{IamfState, push_iamf};
+use crate::{IamfState, frame_obu, push_iamf};
 
 /// The private IEC 61937 data type (`Pc` bits 0-4) of an IAMF burst. Kept in
 /// step with `spdif::DATA_TYPE_IAMF_PRIVATE` in Omniphony, which the sender
@@ -28,35 +30,45 @@ pub fn accepts_data_type(data_type: u8) -> bool {
     data_type == IAMF_DATA_TYPE
 }
 
+/// `payload` is whole OBUs, as a burst that crossed the carrier intact is.
+fn is_whole_obus(payload: &[u8]) -> bool {
+    let mut pos = 0;
+    while pos < payload.len() {
+        match frame_obu(&payload[pos..]) {
+            Ok(Some(obu)) => pos += obu.len,
+            Ok(None) | Err(_) => return false,
+        }
+    }
+    true
+}
+
 /// Decode one burst payload: whole OBUs, nothing carried over from the
-/// burst before.
+/// burst before. A payload that is not is dropped whole.
 pub fn push_burst(
     state: &mut IamfState,
     shared: &mut SharedState,
     payload: &[u8],
     result: &mut RPushResult,
 ) -> AfterPush {
-    // A burst never continues the one before: what that one left unframed
-    // was cut short on the carrier.
+    // A burst never continues the one before.
     state.buf.clear();
-    let after = push_iamf(state, shared, payload, result);
-    if !state.buf.is_empty() {
+    if !is_whole_obus(payload) {
         if let Some(bursts) = state.truncated_bursts.note() {
             bridge_log!(
                 log::Level::Warn,
-                "iamf: IEC 61937 burst ends inside an OBU ({} byte(s) dropped, {bursts} burst(s) so far)",
-                state.buf.len()
+                "iamf: IEC 61937 burst is not whole OBUs, dropped ({} byte(s), {bursts} burst(s) so far)",
+                payload.len()
             );
         }
-        state.buf.clear();
+        return AfterPush::Continue;
     }
-    after
+    push_iamf(state, shared, payload, result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ObuKind, frame_obu, obu_kind};
+    use crate::{ObuKind, obu_kind};
     use abi_stable::std_types::{RString, RVec};
     use bridge_api::RDecodedFrame;
 
@@ -168,8 +180,7 @@ mod tests {
         }
     }
 
-    /// A burst cut short on the carrier does not swallow the next one: what
-    /// it left unframed goes when the next burst arrives.
+    /// A burst cut short on the carrier does not swallow the next one.
     #[test]
     fn a_truncated_burst_does_not_reach_into_the_next() {
         let mut bridge = Harness::new();
@@ -187,6 +198,21 @@ mod tests {
         raw.raw(&[6 << 3, 100, 0xAA, 0xBB, 0xCC]);
         raw.raw(&HEADER);
         assert!(raw.state.descriptors.is_empty());
+    }
+
+    /// None of a damaged burst is decoded, the OBUs that still frame
+    /// included: they are part of a unit the rest of which is lost.
+    #[test]
+    fn the_whole_obus_of_a_damaged_burst_are_dropped_with_it() {
+        let mut bridge = Harness::new();
+        let mut damaged = HEADER.to_vec();
+        damaged.extend_from_slice(&[6 << 3, 100, 0xAA, 0xBB, 0xCC]);
+        bridge.burst(&damaged);
+        assert!(bridge.state.descriptors.is_empty());
+        assert_eq!(bridge.state.truncated_bursts.count(), 1);
+        // An OBU size that does not end is damage as well.
+        bridge.burst(&[6 << 3, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00]);
+        assert_eq!(bridge.state.truncated_bursts.count(), 2);
     }
 
     /// Before a sequence is open, a repeated copy of the descriptors opens

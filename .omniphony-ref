@@ -18,9 +18,7 @@
 # bridges at once (render.bridge_paths, discovery of every bridge in a folder),
 # which the per-family plugins need, and after #787, whose
 # scripts/check_windows_crt_imports.py the Windows static-libopus check
-# imports. bridge_api itself is the 0.6 of #782, unchanged since.
-#
-# TEMPORARY, to move back to a release pin before this merges: the IAMF
-# carrier test (bridge/tests/iamf_carrier.rs) needs spdif 0.1.1, the burst
-# writer of the Omniphony branch below (was c821eb346fc62cee472b1ef968deca5170ed5b18).
-feat/iec61937-iamf
+# imports. bridge_api itself is the 0.6 of #782, unchanged since. Moved to the
+# merge of #831 for spdif 0.1.1: the IAMF burst writer the carrier test
+# (bridge/tests/iamf_carrier.rs) cuts its vectors with.
+55af2c57d6092f72478c4a8f36350bb71703185e
