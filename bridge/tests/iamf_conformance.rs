@@ -56,6 +56,32 @@ fn decode_raw(bridge: &mut FormatBridgeBox, stream: &[u8]) -> Vec<RDecodedFrame>
     frames
 }
 
+/// Push a whole stream through the raw transport in the given pieces.
+fn decode_raw_pieces<'a>(
+    bridge: &mut FormatBridgeBox,
+    pieces: impl Iterator<Item = &'a [u8]>,
+) -> Vec<RDecodedFrame> {
+    let mut frames = Vec::new();
+    for piece in pieces {
+        let result = bridge.push_packet(RSlice::from_slice(piece), RInputTransport::Raw, 0);
+        assert!(result.error_message.is_empty(), "{}", result.error_message);
+        frames.extend(result.frames);
+    }
+    frames
+}
+
+/// The OBUs of a stream, one slice each.
+fn obus(stream: &[u8]) -> Vec<(u8, &[u8])> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while let Ok(Some(frame)) = frame_obu(&stream[pos..]) {
+        out.push((frame.obu_type, &stream[pos..pos + frame.len]));
+        pos += frame.len;
+    }
+    assert_eq!(pos, stream.len(), "the vector frames end to end");
+    out
+}
+
 fn interleaved(frames: &[RDecodedFrame]) -> Vec<i32> {
     frames.iter().flat_map(|f| f.pcm.iter().copied()).collect()
 }
@@ -199,6 +225,111 @@ fn a_reset_resumes_at_the_next_temporal_unit_without_a_sequence_header() {
     let tail = resumed.len() / 2;
     let psnr = psnr_db(&resumed[resumed.len() - tail..], &all[all.len() - tail..]);
     assert!(psnr > 90.0, "resumed tail PSNR {psnr:.1} dB");
+}
+
+#[test]
+fn a_raw_stream_decodes_the_same_however_it_is_cut_into_packets() {
+    // IAMF v2.0, two stereo LPCM elements, 24 units of 1024 samples. Its
+    // temporal delimiters carry `is_not_key_frame` (the header bit that
+    // is `obu_trimming_status_flag` on an audio frame) on every unit but
+    // each sixth, and one element's mix gain mutes it through a parameter
+    // block of six units at units 1, 13 and 19: units 7 to 12 are a gap,
+    // where the default gain lets it through and the level doubles.
+    let (Some(stream), Some(reference)) = (
+        vector("test_000850.iamf"),
+        vector("test_000850_rendered_id_42_sub_mix_0_layout_0.wav"),
+    ) else {
+        eprintln!("skipping: set HARLETTY_IAMF_VECTORS to the libiamf test vectors");
+        return;
+    };
+    const OBU_TEMPORAL_DELIMITER: u8 = 4;
+    const UNITS: usize = 24;
+    const UNIT: usize = 1024;
+    let shipped = std::fs::read(stream).unwrap();
+    assert!(
+        obus(&shipped)
+            .iter()
+            .any(|(obu_type, obu)| *obu_type == OBU_TEMPORAL_DELIMITER && obu[0] & 0x02 != 0),
+        "the vector marks its non-key temporal units"
+    );
+    // The same stream as a sender that strips the delimiters hands it on.
+    let stripped: Vec<u8> = obus(&shipped)
+        .iter()
+        .filter(|(obu_type, _)| *obu_type != OBU_TEMPORAL_DELIMITER)
+        .flat_map(|(_, obu)| obu.iter().copied())
+        .collect();
+    let (channels, expected) = read_wav_s16(&reference);
+    assert_eq!(channels, 2);
+    assert_eq!(expected.len(), UNITS * UNIT * 2);
+
+    for (stream, delimiters) in [(&shipped, "delimited"), (&stripped, "stripped")] {
+        // One temporal unit per packet, the descriptors with the first:
+        // a unit opens with its delimiter, or with its parameter block or
+        // first audio frame (substream 0, OBU type 6) without them.
+        let mut unit_starts = Vec::new();
+        let mut pos = 0;
+        let mut open = false;
+        for (obu_type, obu) in obus(stream) {
+            match obu_type {
+                OBU_TEMPORAL_DELIMITER | 3 | 6 if !open => {
+                    unit_starts.push(pos);
+                    open = true;
+                }
+                // The unit's last audio frame (substream 1).
+                7 => open = false,
+                _ => {}
+            }
+            pos += obu.len();
+        }
+        assert_eq!(unit_starts.len(), UNITS);
+        unit_starts[0] = 0;
+        unit_starts.push(stream.len());
+        let per_unit = unit_starts.windows(2).map(|w| &stream[w[0]..w[1]]);
+
+        let cuts: [(&str, Vec<&[u8]>); 4] = [
+            ("one unit per packet", per_unit.collect()),
+            ("one packet", vec![&stream[..]]),
+            ("4096-byte packets", stream.chunks(4096).collect()),
+            ("997-byte packets", stream.chunks(997).collect()),
+        ];
+        for (cut, pieces) in cuts {
+            let mut bridge = harletty_bridge::new_bridge(false);
+            let frames = decode_raw_pieces(&mut bridge, pieces.into_iter());
+            assert_eq!(frames.len(), UNITS, "{delimiters}, {cut}");
+            for frame in &frames {
+                assert_eq!(
+                    frame.channel_labels.as_slice(),
+                    [RChannelLabel::L, RChannelLabel::R]
+                );
+                assert_eq!(frame.sample_count as usize, UNIT);
+            }
+            let ours = interleaved(&frames);
+            // Per unit first, so a block applied to the wrong units reads
+            // as such: the sum of magnitudes doubles in the gap.
+            let level = |pcm: &[i32], unit: usize| -> i64 {
+                pcm[unit * UNIT * 2..(unit + 1) * UNIT * 2]
+                    .iter()
+                    .map(|s| i64::from(s.abs()))
+                    .sum()
+            };
+            let doubled: Vec<usize> = (0..UNITS)
+                .filter(|&unit| level(&ours, unit) > level(&ours, 0) * 3 / 2)
+                .map(|unit| unit + 1)
+                .collect();
+            assert_eq!(doubled, [7, 8, 9, 10, 11, 12], "{delimiters}, {cut}");
+            // A stereo mix into the bed's front pair, at the reference's
+            // 16 bits.
+            let max_diff = ours
+                .iter()
+                .zip(&expected)
+                .map(|(a, b)| ((a - b).abs() + 128) >> 8)
+                .max();
+            assert!(
+                max_diff <= Some(1),
+                "{delimiters}, {cut}: max diff {max_diff:?} (16-bit steps)"
+            );
+        }
+    }
 }
 
 /// All metadata events of a decode, in order.
