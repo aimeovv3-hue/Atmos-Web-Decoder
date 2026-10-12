@@ -198,7 +198,18 @@ fn a_damaged_burst_costs_its_unit_only() {
     let sequence = IamfSequence::parse(&stream).unwrap();
     assert!(sequence.units.len() > 12);
 
-    let decode = |damaged: Option<usize>| -> Vec<Vec<i32>> {
+    // How unit 5 is damaged: its last byte lost (the last OBU no longer
+    // frames, the ones before it still do), or its last OBU lost whole (what
+    // is left is whole OBUs, of an incomplete unit).
+    let last_obu = |unit: &[u8]| -> usize {
+        let (mut pos, mut last) = (0, 0);
+        while let Ok(Some(obu)) = bridge_family_iamf::frame_obu(&unit[pos..]) {
+            last = pos;
+            pos += obu.len;
+        }
+        last
+    };
+    let decode = |damaged: Option<usize>, whole_obu: bool| -> Vec<Vec<i32>> {
         let mut bridge = harletty_bridge::new_bridge(false);
         let mut units = Vec::new();
         for (index, unit) in sequence.units.iter().enumerate() {
@@ -209,9 +220,12 @@ fn a_damaged_burst_costs_its_unit_only() {
             };
             payload.extend_from_slice(unit);
             if damaged == Some(index) {
-                // Its last byte lost: the last OBU no longer frames, the
-                // ones before it still do.
-                payload.pop();
+                let keep = if whole_obu {
+                    payload.len() - (unit.len() - last_obu(unit))
+                } else {
+                    payload.len() - 1
+                };
+                payload.truncate(keep);
             }
             let result = bridge.push_packet(
                 RSlice::from_slice(&payload),
@@ -230,13 +244,15 @@ fn a_damaged_burst_costs_its_unit_only() {
         units
     };
 
-    let intact = decode(None);
+    let intact = decode(None, false);
     assert!(intact.iter().all(|unit| !unit.is_empty()));
-    let hurt = decode(Some(5));
-    assert!(hurt[5].is_empty(), "the damaged unit is not heard");
-    for (index, (ours, reference)) in hurt.iter().zip(&intact).enumerate() {
-        if index != 5 {
-            assert_eq!(ours, reference, "unit {index}");
+    for whole_obu in [false, true] {
+        let hurt = decode(Some(5), whole_obu);
+        assert!(hurt[5].is_empty(), "the damaged unit is not heard");
+        for (index, (ours, reference)) in hurt.iter().zip(&intact).enumerate() {
+            if index != 5 {
+                assert_eq!(ours, reference, "unit {index}, whole OBU lost: {whole_obu}");
+            }
         }
     }
 }
