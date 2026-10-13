@@ -103,7 +103,15 @@ pub struct OamdObjectBlock {
     pub render_info_status: u8,
     pub render_info_blocks: Option<u8>,
     pub anchor: ObjectAnchor,
-    pub gain: Option<f32>,
+    /// `object_gain` in dB (ETSI TS 103 420, tables 18 and 19):
+    /// `f32::NEG_INFINITY` is the −∞ dB of `object_gain_idx` 1 and of an
+    /// inactive object (table 28). `None` until the stream has signalled a
+    /// gain for the object.
+    pub gain_db: Option<f32>,
+    /// `object_gain_idx` 3: the gain is the previous object's in this update
+    /// block. A parsed block carries the flag and no `gain_db`; resolving the
+    /// payload fills `gain_db` in.
+    pub gain_from_previous_object: bool,
     pub priority: Option<u8>,
     pub valid_position: bool,
     pub differential_position: bool,
@@ -220,7 +228,7 @@ struct OamdObjectElementParseState {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct OamdObjectBlockParseState {
     anchor: ObjectAnchor,
-    gain: Option<f32>,
+    gain_db: Option<f32>,
     priority: Option<u8>,
     valid_position: bool,
     differential_position: bool,
@@ -235,7 +243,7 @@ impl Default for OamdObjectBlockParseState {
     fn default() -> Self {
         Self {
             anchor: ObjectAnchor::Room,
-            gain: None,
+            gain_db: None,
             priority: None,
             valid_position: false,
             differential_position: false,
@@ -321,6 +329,18 @@ impl OamdObjectElementParseState {
     ) {
         for (object_index, blocks) in element.object_blocks.iter_mut().enumerate() {
             for (block_index, block) in blocks.iter_mut().enumerate() {
+                if block.gain_from_previous_object {
+                    // Objects resolve in order, so the previous object's state
+                    // already holds its gain for this block, −∞ dB if it is
+                    // inactive; the first object has no previous one and
+                    // defaults to 0 dB (table 18). A previous object that
+                    // reuses a gain the stream never gave it plays at 0 dB,
+                    // and so does the one that takes its gain.
+                    let previous = object_index
+                        .checked_sub(1)
+                        .and_then(|prev| self.object_blocks[prev][block_index].gain_db);
+                    block.gain_db = Some(previous.unwrap_or(0.0));
+                }
                 self.object_blocks[object_index][block_index]
                     .resolve_block(block, object_index < bed_or_isf_objects);
             }
@@ -336,15 +356,19 @@ impl OamdObjectBlockParseState {
         } else {
             parsed.basic_info_status
         };
-        if (basic_info_status & 1) != 0 {
+        if basic_info_status == 0 {
+            // Default values (table 28): an inactive object, like a block that
+            // neither signals nor reuses its basic info, has a gain of −∞ dB.
+            self.gain_db = Some(f32::NEG_INFINITY);
+        } else if (basic_info_status & 1) != 0 {
             let blocks = parsed
                 .basic_info_blocks
                 .unwrap_or(if basic_info_status == 1 { 3 } else { 0 });
 
             if (blocks & 2) != 0
-                && let Some(gain) = parsed.gain
+                && let Some(gain_db) = parsed.gain_db
             {
-                self.gain = Some(gain);
+                self.gain_db = Some(gain_db);
             }
 
             if (blocks & 1) != 0 && parsed.priority.is_some() {
@@ -389,7 +413,7 @@ impl OamdObjectBlockParseState {
         }
 
         parsed.anchor = self.anchor;
-        parsed.gain = self.gain;
+        parsed.gain_db = self.gain_db;
         parsed.priority = self.priority;
         parsed.valid_position = self.valid_position;
         parsed.differential_position = self.differential_position;
@@ -726,7 +750,8 @@ fn parse_oamd_object_block(
     };
 
     let mut basic_info_blocks = None;
-    let mut gain = None;
+    let mut gain_db = None;
+    let mut gain_from_previous_object = false;
     let mut priority = None;
     if (basic_info_status & 1) != 0 {
         let blocks = if basic_info_status == 1 {
@@ -737,20 +762,22 @@ fn parse_oamd_object_block(
         basic_info_blocks = Some(blocks);
 
         if (blocks & 2) != 0 {
-            let gain_code = read_bits(reader, 2, "oa_gain_helper")?;
-            gain = match gain_code {
-                0 => Some(0.707),
-                1 => Some(0.0),
+            // object_gain_idx, then object_gain_bits (tables 18 and 19).
+            gain_db = match read_bits(reader, 2, "oa_gain_helper")? {
+                0 => Some(0.0),
+                1 => Some(f32::NEG_INFINITY),
                 2 => {
-                    let gain_step = read_bits(reader, 6, "oa_gain_step")? as i32;
-                    let gain_db = if gain_step < 15 {
-                        15 - gain_step
+                    let gain_bits = read_bits(reader, 6, "oa_gain_step")? as i32;
+                    Some(if gain_bits < 15 {
+                        15 - gain_bits
                     } else {
-                        14 - gain_step
-                    };
-                    Some(db_to_gain(gain_db as f32) * 0.707)
+                        14 - gain_bits
+                    } as f32)
                 }
-                _ => None,
+                _ => {
+                    gain_from_previous_object = true;
+                    None
+                }
             };
         }
 
@@ -868,10 +895,11 @@ fn parse_oamd_object_block(
     }
 
     emit_metadata_debug(format_args!(
-        "oamd-object-block obj={object_index} blk={block_index} start={start_pos} end={} inactive={} basic_status={} basic_blocks={basic_info_blocks:?} gain={gain:?} render_status={} render_blocks={render_info_blocks:?} anchor={anchor:?} valid_pos={} diff={} pos={position:?} dist={distance:?} size={size:?} screen={screen_factor:?}/{depth_factor:?} addtl={additional_data_bytes}",
+        "oamd-object-block obj={object_index} blk={block_index} start={start_pos} end={} inactive={} basic_status={} basic_blocks={basic_info_blocks:?} gain_db={gain_db:?} prev_obj_gain={} render_status={} render_blocks={render_info_blocks:?} anchor={anchor:?} valid_pos={} diff={} pos={position:?} dist={distance:?} size={size:?} screen={screen_factor:?}/{depth_factor:?} addtl={additional_data_bytes}",
         reader.position(),
         inactive as u8,
         basic_info_status,
+        gain_from_previous_object as u8,
         render_info_status,
         valid_position as u8,
         differential_position as u8,
@@ -883,7 +911,8 @@ fn parse_oamd_object_block(
         render_info_status,
         render_info_blocks,
         anchor,
-        gain,
+        gain_db,
+        gain_from_previous_object,
         priority,
         valid_position,
         differential_position,
@@ -1301,10 +1330,6 @@ fn read_bit_vec(reader: &mut BitReader<'_>, bits: usize) -> Result<Vec<bool>, Pa
     Ok(result)
 }
 
-fn db_to_gain(db: f32) -> f32 {
-    10f32.powf(db / 20.0)
-}
-
 const BED_CHANNELS: [BedChannel; 17] = [
     BedChannel::FrontLeft,
     BedChannel::FrontRight,
@@ -1347,7 +1372,8 @@ impl Default for OamdObjectBlock {
             render_info_status: 0,
             render_info_blocks: None,
             anchor: ObjectAnchor::Room,
-            gain: None,
+            gain_db: None,
+            gain_from_previous_object: false,
             priority: None,
             valid_position: false,
             differential_position: false,
@@ -1988,6 +2014,132 @@ mod tests {
         }
     }
 
+    /// Pack `(value, width)` fields MSB first, zero-padded to a whole byte.
+    fn pack_bits(fields: &[(u32, usize)]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut filled = 0;
+        for &(value, width) in fields {
+            for shift in (0..width).rev() {
+                if filled % 8 == 0 {
+                    bytes.push(0);
+                }
+                if (value >> shift) & 1 == 1 {
+                    *bytes.last_mut().unwrap() |= 0x80 >> (filled % 8);
+                }
+                filled += 1;
+            }
+        }
+        bytes
+    }
+
+    /// The first block of a bed object: active, then `gain_fields`, default
+    /// priority, no additional table data.
+    fn parse_bed_block_gain(gain_fields: &[(u32, usize)]) -> OamdObjectBlock {
+        let mut fields = vec![(0, 1)];
+        fields.extend_from_slice(gain_fields);
+        fields.extend_from_slice(&[(1, 1), (0, 1)]);
+        let bytes = pack_bits(&fields);
+        let mut reader = BitReader::new(&bytes);
+        parse_oamd_object_block(&mut reader, 0, 0, true).expect("object block")
+    }
+
+    #[test]
+    fn object_gain_is_parsed_in_db() {
+        // object_gain_idx 0 and 1 (table 18).
+        assert_eq!(parse_bed_block_gain(&[(0, 2)]).gain_db, Some(0.0));
+        assert_eq!(
+            parse_bed_block_gain(&[(1, 2)]).gain_db,
+            Some(f32::NEG_INFINITY)
+        );
+        // object_gain_idx 2: object_gain_bits (table 19), both ends of both ranges.
+        for (bits, db) in [(0, 15.0), (14, 1.0), (15, -1.0), (63, -49.0)] {
+            let block = parse_bed_block_gain(&[(2, 2), (bits, 6)]);
+            assert_eq!(block.gain_db, Some(db), "object_gain_bits {bits}");
+            assert!(!block.gain_from_previous_object);
+        }
+        // object_gain_idx 3 is resolved against the previous object.
+        let block = parse_bed_block_gain(&[(3, 2)]);
+        assert_eq!(block.gain_db, None);
+        assert!(block.gain_from_previous_object);
+    }
+
+    #[test]
+    fn object_gain_idx_3_takes_the_previous_objects_gain() {
+        let signalled = |gain_db| OamdObjectBlock {
+            basic_info_status: 1,
+            basic_info_blocks: Some(3),
+            gain_db,
+            gain_from_previous_object: gain_db.is_none(),
+            ..OamdObjectBlock::default()
+        };
+        let mut payload = payload_with_object_blocks(vec![
+            vec![signalled(None)],
+            vec![signalled(Some(-6.0))],
+            vec![signalled(None)],
+            vec![signalled(None)],
+            vec![signalled(Some(f32::NEG_INFINITY))],
+            vec![signalled(None)],
+        ]);
+
+        let mut state = MetadataParseState::default();
+        state.oamd.resolve_payload(&mut payload);
+
+        assert_eq!(
+            first_block_gains(&payload),
+            [
+                Some(0.0), // first object: no previous one, 0 dB
+                Some(-6.0),
+                Some(-6.0),
+                Some(-6.0), // chains through an object that reused it too
+                Some(f32::NEG_INFINITY),
+                Some(f32::NEG_INFINITY),
+            ]
+        );
+    }
+
+    fn first_block_gains(payload: &OamdPayload) -> Vec<Option<f32>> {
+        let OamdElementKind::Object(object) = &payload.elements[0].kind else {
+            panic!("expected object element");
+        };
+        object
+            .object_blocks
+            .iter()
+            .map(|blocks| blocks[0].gain_db)
+            .collect()
+    }
+
+    #[test]
+    fn an_inactive_object_has_a_gain_of_minus_infinity_and_hands_it_on() {
+        let signalled = |gain_db: Option<f32>| OamdObjectBlock {
+            basic_info_status: 1,
+            basic_info_blocks: Some(3),
+            gain_db,
+            gain_from_previous_object: gain_db.is_none(),
+            ..OamdObjectBlock::default()
+        };
+        let inactive = || OamdObjectBlock {
+            inactive: true,
+            ..OamdObjectBlock::default()
+        };
+        let mut state = MetadataParseState::default();
+
+        // Inactive from the first frame: the next object takes −∞, not 0 dB.
+        let mut first = payload_with_object_blocks(vec![vec![inactive()], vec![signalled(None)]]);
+        state.oamd.resolve_payload(&mut first);
+        assert_eq!(first_block_gains(&first), [Some(f32::NEG_INFINITY); 2]);
+
+        // Active at +6 dB, then inactive: the next object takes −∞, not the
+        // +6 dB of the frame before.
+        let mut active =
+            payload_with_object_blocks(vec![vec![signalled(Some(6.0))], vec![signalled(None)]]);
+        state.oamd.resolve_payload(&mut active);
+        assert_eq!(first_block_gains(&active), [Some(6.0); 2]);
+        let mut silenced =
+            payload_with_object_blocks(vec![vec![inactive()], vec![signalled(None)]]);
+        state.oamd.resolve_payload(&mut silenced);
+        assert_eq!(first_block_gains(&silenced), [Some(f32::NEG_INFINITY); 2]);
+    }
+
     fn second_block(payload: &OamdPayload) -> &OamdObjectBlock {
         let OamdElementKind::Object(object) = &payload.elements[0].kind else {
             panic!("expected object element");
@@ -2010,7 +2162,7 @@ mod tests {
                 render_info_status: 3,
                 render_info_blocks: Some(13),
                 anchor: ObjectAnchor::Screen,
-                gain: Some(0.5),
+                gain_db: Some(-6.0),
                 priority: Some(7),
                 valid_position: true,
                 differential_position: false,
@@ -2025,7 +2177,7 @@ mod tests {
         let mut omitted = payload_with_object_blocks(vec![vec![
             OamdObjectBlock::default(),
             OamdObjectBlock {
-                basic_info_status: 0,
+                basic_info_status: 2,
                 render_info_status: 0,
                 ..OamdObjectBlock::default()
             },
@@ -2037,7 +2189,7 @@ mod tests {
 
         let resolved = second_block(&omitted);
         assert_eq!(resolved.anchor, ObjectAnchor::Screen);
-        assert_eq!(resolved.gain, Some(0.5));
+        assert_eq!(resolved.gain_db, Some(-6.0));
         assert_eq!(resolved.priority, Some(7));
         assert!(resolved.valid_position);
         assert!(!resolved.differential_position);
@@ -2063,7 +2215,7 @@ mod tests {
                 render_info_status: 3,
                 render_info_blocks: Some(13),
                 anchor: ObjectAnchor::Screen,
-                gain: Some(0.8),
+                gain_db: Some(-2.0),
                 priority: Some(3),
                 valid_position: true,
                 differential_position: true,
@@ -2078,7 +2230,7 @@ mod tests {
         let mut second = payload_with_object_blocks(vec![vec![
             OamdObjectBlock::default(),
             OamdObjectBlock {
-                basic_info_status: 0,
+                basic_info_status: 2,
                 render_info_status: 3,
                 render_info_blocks: Some(4),
                 size: Some([0.75, 0.75, 0.75]),
@@ -2092,7 +2244,7 @@ mod tests {
 
         let resolved = second_block(&second);
         assert_eq!(resolved.anchor, ObjectAnchor::Screen);
-        assert_eq!(resolved.gain, Some(0.8));
+        assert_eq!(resolved.gain_db, Some(-2.0));
         assert_eq!(resolved.priority, Some(3));
         assert!(!resolved.valid_position);
         assert!(resolved.differential_position);
