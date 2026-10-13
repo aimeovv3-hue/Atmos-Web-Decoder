@@ -414,14 +414,14 @@ fn build_thd_frame(
 ) -> RDecodedFrame {
     #[cfg(feature = "bridge-perf")]
     let pcm_started = Instant::now();
-    // Build interleaved PCM: [s0c0, s0c1, …, s(M-1)c(N-1)].
-    // Manual loops avoid iterator/closure overhead on this hot path.
-    let mut pcm: RVec<i32> = RVec::with_capacity(decoded.sample_length * decoded.channel_count);
-    for s in 0..decoded.sample_length {
-        for c in 0..decoded.channel_count {
-            pcm.push(decoded.pcm_data[s][c]);
-        }
+    // Interleaved PCM, [s0c0, s0c1, …, s(M-1)c(N-1)], is the decoder's rows end to
+    // end, each cut to the channels the presentation has: a copy per row, where a
+    // push per sample checks the capacity every time.
+    let mut pcm = Vec::with_capacity(decoded.sample_length * decoded.channel_count);
+    for row in &decoded.pcm_data[..decoded.sample_length] {
+        pcm.extend_from_slice(&row[..decoded.channel_count]);
     }
+    let pcm: RVec<i32> = pcm.into();
     #[cfg(feature = "bridge-perf")]
     ctx.perf.record_build_pcm(pcm_started.elapsed());
 
