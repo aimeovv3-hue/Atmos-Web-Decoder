@@ -1,6 +1,6 @@
 # harletty-bridge
 
-**The Dolby TrueHD / E-AC-3 (Atmos) decoder for the
+**The Dolby TrueHD / E-AC-3 (Atmos) / DTS:X / Eclipsa decoder for the
 [Omniphony](https://github.com/mgth/Omniphony) renderer.**
 
 In plain terms: this is the piece that lets Omniphony (and
