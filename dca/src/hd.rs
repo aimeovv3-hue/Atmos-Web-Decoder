@@ -204,13 +204,20 @@ pub fn exss_has_xll(data: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
-#[derive(Default)]
 pub struct HdDecoder {
     core: CoreDecoder,
     synth: SynthState,
     xll: XllDecoder,
     /// The core as synthesized for the current frame, kept for its buffers.
     core_out: CoreOutput,
+}
+
+impl Default for HdDecoder {
+    /// [`HdDecoder::new`]: a derived default would leave the XLL decoder
+    /// without its speaker output slots.
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HdDecoder {
@@ -649,6 +656,61 @@ mod tests {
             offset += core.frame_size + exss_size;
         }
         assert_eq!(frames, 100);
+    }
+
+    /// `HdDecoder::default()` is `new()`: the derived default left the XLL
+    /// decoder without speaker output slots, and the first lossless frame
+    /// panicked indexing them.
+    #[test]
+    fn default_decoder_has_the_xll_output_slots() {
+        assert_eq!(HdDecoder::default().xll.output.len(), 32);
+        assert_eq!(
+            HdDecoder::default().xll.output.len(),
+            HdDecoder::new().xll.output.len()
+        );
+    }
+
+    #[test]
+    fn default_decoder_decodes_like_new() {
+        use std::io::Read;
+
+        let Ok(dump) = std::env::var("HARLETTY_DTSX_STANDARD_CORPUS") else {
+            eprintln!("skipping: HARLETTY_DTSX_STANDARD_CORPUS is not set");
+            return;
+        };
+        if !std::path::Path::new(&dump).is_file() {
+            eprintln!("skipping: configured corpus is not readable");
+            return;
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(dump)
+            .unwrap()
+            .take(1024 * 1024)
+            .read_to_end(&mut bytes)
+            .unwrap();
+
+        let mut by_default = HdDecoder::default();
+        let mut by_new = HdDecoder::new();
+        let mut offset = 0usize;
+        let mut frames = 0usize;
+        while frames < 16 && offset + 18 < bytes.len() {
+            let core = parse_header(&bytes[offset..]).unwrap();
+            let exss_offset = offset + core.frame_size;
+            let exss_size = ExssParser::parse(&bytes[exss_offset..])
+                .unwrap()
+                .substream_size();
+            let core_au = &bytes[offset..exss_offset];
+            let exss = &bytes[exss_offset..exss_offset + exss_size];
+            let expected = by_new.decode(core_au, exss).unwrap();
+            let frame = by_default.decode(core_au, exss).unwrap();
+            assert_ne!(frame.output_mask, 0);
+            assert_eq!(frame.output_mask, expected.output_mask);
+            assert_eq!(frame.samples, expected.samples);
+            assert_eq!(frame.x_samples, expected.x_samples);
+            frames += 1;
+            offset += core.frame_size + exss_size;
+        }
+        assert_eq!(frames, 16);
     }
 }
 
