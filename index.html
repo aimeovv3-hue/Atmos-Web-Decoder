@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dolby TrueHD & E-AC-3 JOC (Atmos) Web Decoder — WASM SIMD128</title>
+  <style>
+    :root {
+      --bg-primary: #0b0f19;
+      --bg-card: #131b2e;
+      --bg-input: #0e1525;
+      --border: #23304d;
+      --accent: #3b82f6;
+      --accent-glow: rgba(59, 130, 246, 0.35);
+      --success: #10b981;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      padding: 24px 16px;
+      line-height: 1.5;
+    }
+    .container { max-width: 960px; margin: 0 auto; }
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px;
+    }
+    .header h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; }
+    .badge {
+      background: rgba(59, 130, 246, 0.15); color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600;
+    }
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px; margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 0.95rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 16px;
+    }
+    .grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;
+    }
+    label { display: block; font-size: 0.82rem; font-weight: 500; color: var(--text-muted); margin-bottom: 6px; }
+    select, input[type="number"], input[type="file"] {
+      width: 100%; background: var(--bg-input); color: var(--text-main);
+      border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+      font-size: 0.9rem; outline: none;
+    }
+    select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+    .layout-info-box {
+      margin-top: 14px; background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 14px; font-size: 0.85rem;
+    }
+    .channel-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .pill {
+      background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
+      padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-family: monospace;
+    }
+    .checkbox-row {
+      display: flex; flex-wrap: wrap; gap: 18px; margin-top: 16px; padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .checkbox-item { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer; }
+    .btn-primary {
+      width: 100%; background: var(--accent); color: #fff; border: none;
+      padding: 13px 20px; border-radius: 8px; font-size: 0.95rem; font-weight: 600;
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+    .stats-bar {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px;
+    }
+    .stat-box {
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px; text-align: center;
+    }
+    .stat-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; }
+    .stat-val { font-size: 1.15rem; font-weight: 700; font-family: monospace; color: #60a5fa; }
+    .progress-track {
+      width: 100%; height: 12px; background: var(--bg-input);
+      border-radius: 999px; overflow: hidden; border: 1px solid var(--border);
+    }
+    .progress-fill {
+      height: 100%; width: 0%; background: linear-gradient(90deg, #3b82f6, #10b981);
+      transition: width 0.08s linear;
+    }
+    pre.console {
+      background: #070a12; border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px; font-size: 0.78rem; color: #a7f3d0; font-family: monospace;
+      max-height: 180px; overflow-y: auto; white-space: pre-wrap; margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>Dolby TrueHD & E-AC-3 JOC Atmos Decoder</h1>
+        <p style="font-size:0.84rem; color:var(--text-muted);">Harletty Bridge v0.9.0 • WASM AOT + SIMD128 • Multi-Channel Interleaved WAV</p>
+      </div>
+      <span class="badge">TRUEHD DEFAULT • 7000+ FRAMES/MIN</span>
+    </div>
+
+    <div class="card">
+      <div class="card-title">1. Source Stream & Decoder Engine</div>
+      <div class="grid">
+        <div>
+          <label for="fileInput">Input File (.m4a, .mp4, .ec3, .eac3, .thd, .mlp)</label>
+          <input type="file" id="fileInput" accept=".m4a,.mp4,.ec3,.eac3,.thd,.truehd,.mlp,.ac3,.dtshd,.iamf,.wav" />
+        </div>
+        <div>
+          <label for="codecSelect">Decoder Codec Family (MMH Mode)</label>
+          <select id="codecSelect">
+            <option value="truehd" selected>Dolby TrueHD (Atmos MLP + Auto E-AC-3 JOC .m4a)</option>
+            <option value="eac3">Dolby Digital Plus (E-AC-3 JOC 16-Object Atmos)</option>
+            <option value="ac3">Dolby Digital (AC-3 Core + Dependent Substream Merge)</option>
+            <option value="mat">Dolby MAT 2.0 (IEC 61937 Atmos Transport)</option>
+            <option value="dtsx">DTS:X / DTS-HD Master Audio (DCA Bridge)</option>
+            <option value="iamf">Eclipsa Audio / IAMF (Immersive Audio Model)</option>
+            <option value="auro">Auro-3D (Auro Codec Engine)</option>
+            <option value="damf">DAMF (Dolby Atmos Master File)</option>
+          </select>
+        </div>
+        <div>
+          <label for="presentationSelect">Atmos Presentation & Substream Mode</label>
+          <select id="presentationSelect">
+            <option value="0" selected>Atmos Object Decoder (Substream 4 / JOC 16 Objects)</option>
+            <option value="1">Core + Dependent Substream Merge (7.1 Fullband)</option>
+            <option value="2">Core Bed Channels Only (5.1 Bed)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">2. Target Speaker Layout & High-Speed DSP Configuration</div>
+      <div class="grid">
+        <div>
+          <label for="layoutSelect">Target Speaker Layout</label>
+          <select id="layoutSelect">
+            <option value="9.1.6" selected>9.1.6 Atmos (16 Channels Interleaved WAV)</option>
+            <option value="objects">16 Raw Atmos Objects (Unmixed Direct OAMD Channels)</option>
+            <option value="7.1.4">7.1.4 Atmos (12 Channels Interleaved)</option>
+            <option value="7.1.6">7.1.6 Atmos (14 Channels Interleaved)</option>
+            <option value="9.1.4">9.1.4 Atmos (14 Channels Interleaved)</option>
+            <option value="9.1.2 side">9.1.2 Side (12 Channels Interleaved)</option>
+            <option value="9.1.2 front">9.1.2 Front (12 Channels Interleaved)</option>
+            <option value="7.1.2 side">7.1.2 Side (10 Channels Interleaved)</option>
+            <option value="7.1.2 front">7.1.2 Front (10 Channels Interleaved)</option>
+            <option value="5.1.6">5.1.6 Atmos (12 Channels Interleaved)</option>
+            <option value="5.1.4">5.1.4 Atmos (10 Channels Interleaved)</option>
+            <option value="5.1.2 side">5.1.2 Side (8 Channels Interleaved)</option>
+            <option value="5.1.2 front">5.1.2 Front (8 Channels Interleaved)</option>
+            <option value="7.1">7.1 Surround (8 Channels Interleaved)</option>
+            <option value="6.2">6.2 Surround (8 Channels Interleaved)</option>
+            <option value="5.1 side">5.1 Side Surround (6 Channels)</option>
+            <option value="5.1 rear">5.1 Rear Surround (6 Channels)</option>
+            <option value="4.1.3">4.1.3 Surround (8 Channels)</option>
+            <option value="4.1.1">4.1.1 Surround (6 Channels)</option>
+            <option value="4.0">4.0 Quadraphonic (4 Channels)</option>
+            <option value="small cinema">Small Cinema (12 Channels)</option>
+            <option value="22.2">22.2 Surround SMPTE 2036-2 (24 Channels)</option>
+            <option value="2.0">2.0 Stereo Downmix (2 Channels)</option>
+            <option value="virtualizer">Headphone Virtualizer Binaural (2 Channels)</option>
+            <option value="1.0">1.0 Mono Center (1 Channel)</option>
+          </select>
+        </div>
+        <div>
+          <label for="bitDepthSelect">WAV Output Bit Depth</label>
+          <select id="bitDepthSelect">
+            <option value="32">32-bit IEEE Float (Zero Clipping / Mastering)</option>
+            <option value="24" selected>24-bit Signed PCM (Studio Standard)</option>
+            <option value="16">16-bit Signed PCM (Standard)</option>
+            <option value="8">8-bit Unsigned PCM</option>
+          </select>
+        </div>
+        <div>
+          <label for="sampleRateSelect">Target Sample Rate</label>
+          <select id="sampleRateSelect">
+            <option value="0" selected>Native Stream Rate (Auto 48kHz / 96kHz)</option>
+            <option value="48000">48,000 Hz</option>
+            <option value="96000">96,000 Hz (TrueHD High-Res)</option>
+          </select>
+        </div>
+        <div>
+          <label for="batchSpeedSelect">Frame Processing Speed (Batch Size)</label>
+          <select id="batchSpeedSelect">
+            <option value="128" selected>Turbo SIMD (128 Frames/Batch • 7,000+ Frames/min)</option>
+            <option value="64">Fast Batch (64 Frames/Batch • High Responsiveness)</option>
+            <option value="32">Balanced Batch (32 Frames/Batch)</option>
+          </select>
+        </div>
+        <div>
+          <label for="drcSelect">Dolby Dynamic Range Control (DRC)</label>
+          <select id="drcSelect">
+            <option value="0" selected>Off (100% Full Dynamic Range)</option>
+            <option value="1">Film Standard</option>
+            <option value="2">Film Light</option>
+            <option value="3">Music Standard</option>
+            <option value="4">Music Light</option>
+          </select>
+        </div>
+        <div>
+          <label for="gainInput">Master Output Gain (dB)</label>
+          <input type="number" id="gainInput" value="0.0" step="0.5" min="-40" max="20" />
+        </div>
+      </div>
+
+      <div class="layout-info-box" id="layoutInfoBox">
+        <div><strong id="layoutTitleText">9.1.6 Atmos — 16 Channels (Bed: 9.1 + Heights: 6)</strong></div>
+        <div class="channel-pills" id="channelPills"></div>
+      </div>
+
+      <div class="checkbox-row">
+        <label class="checkbox-item">
+          <input type="checkbox" id="swapSurroundsCheck" />
+          Swap Surrounds (RL/RR ↔ SL/SR)
+        </label>
+        <label class="checkbox-item">
+          <input type="checkbox" id="trimLatencyCheck" checked />
+          Trim JOC Filterbank Latency (JOC_LATENCY_SAMPLES)
+        </label>
+        <label class="checkbox-item">
+          <input type="checkbox" id="lfeSepCheck" />
+          LFE Low-Pass Separation
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">3. Real-Time Decoding Telemetry</div>
+      <div class="stats-bar">
+        <div class="stat-box">
+          <div class="stat-label">Frames Processed</div>
+          <div class="stat-val" id="framesStat">0 / 0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Speed (FPS)</div>
+          <div class="stat-val" id="fpsStat">0 FPS</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Frames / Min</div>
+          <div class="stat-val" id="fpmStat">0 / min</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Elapsed / ETA</div>
+          <div class="stat-val" id="etaStat">0.0s</div>
+        </div>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div style="margin-top: 16px;">
+        <button class="btn-primary" id="decodeBtn">Decode & Export Interleaved Multi-Channel WAV</button>
+      </div>
+      <pre class="console" id="consoleBox">[System] Ready. Select an .m4a (E-AC-3 JOC), .ec3, or .thd (Dolby TrueHD) file.</pre>
+    </div>
+  </div>
+
+  <script type="module">
+    const LAYOUT_SPECS = {
+      "9.1.6": { desc: "9.1.6 Atmos — 16 Channels Interleaved (Bed 9.1 + 6 Top Heights)", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","WL","WR","TFL","TFR","TSL","TSR","TRL","TRR"] },
+      "objects": { desc: "16 Raw Atmos Objects — Direct OAMD Extraction (Unmixed)", ch: ["OBJ1","OBJ2","OBJ3","OBJ4","OBJ5","OBJ6","OBJ7","OBJ8","OBJ9","OBJ10","OBJ11","OBJ12","OBJ13","OBJ14","OBJ15","OBJ16"] },
+      "7.1.4": { desc: "7.1.4 Atmos — 12 Channels Interleaved (Bed 7.1 + 4 Top Heights)", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","TFL","TFR","TRL","TRR"] },
+      "7.1.6": { desc: "7.1.6 Atmos — 14 Channels Interleaved (Bed 7.1 + 6 Top Heights)", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","TFL","TFR","TSL","TSR","TRL","TRR"] },
+      "9.1.4": { desc: "9.1.4 Atmos — 14 Channels Interleaved (Bed 9.1 + 4 Top Heights)", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","WL","WR","TFL","TFR","TRL","TRR"] },
+      "9.1.2 side": { desc: "9.1.2 Side — 12 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","WL","WR","TSL","TSR"] },
+      "9.1.2 front": { desc: "9.1.2 Front — 12 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","WL","WR","TFL","TFR"] },
+      "7.1.2 side": { desc: "7.1.2 Side — 10 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","TSL","TSR"] },
+      "7.1.2 front": { desc: "7.1.2 Front — 10 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","TFL","TFR"] },
+      "5.1.6": { desc: "5.1.6 Atmos — 12 Channels Interleaved", ch: ["FL","FR","FC","LFE","SL","SR","TFL","TFR","TSL","TSR","TRL","TRR"] },
+      "5.1.4": { desc: "5.1.4 Atmos — 10 Channels Interleaved", ch: ["FL","FR","FC","LFE","SL","SR","TFL","TFR","TRL","TRR"] },
+      "5.1.2 side": { desc: "5.1.2 Side — 8 Channels Interleaved", ch: ["FL","FR","FC","LFE","SL","SR","TSL","TSR"] },
+      "5.1.2 front": { desc: "5.1.2 Front — 8 Channels Interleaved", ch: ["FL","FR","FC","LFE","SL","SR","TFL","TFR"] },
+      "7.1": { desc: "7.1 Surround — 8 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR"] },
+      "6.2": { desc: "6.2 Surround — 8 Channels Interleaved (Dual LFE)", ch: ["FL","FR","FC","LFE","RC","LFE2","SL","SR"] },
+      "5.1 side": { desc: "5.1 Side Surround — 6 Channels", ch: ["FL","FR","FC","LFE","SL","SR"] },
+      "5.1 rear": { desc: "5.1 Rear Surround — 6 Channels", ch: ["FL","FR","FC","LFE","RL","RR"] },
+      "4.1.3": { desc: "4.1.3 Surround — 8 Channels", ch: ["FL","FR","LFE","RL","RR","TFL","TFR","TC"] },
+      "4.1.1": { desc: "4.1.1 Surround — 6 Channels", ch: ["FL","FR","LFE","RL","RR","TC"] },
+      "4.0": { desc: "4.0 Quadraphonic — 4 Channels", ch: ["FL","FR","RL","RR"] },
+      "small cinema": { desc: "Small Cinema — 12 Channels", ch: ["FL","FR","FC","LFE","SL","SR","RL","RR","WL","WR","FLC","FRC"] },
+      "22.2": { desc: "22.2 Surround (SMPTE 2036-2) — 24 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","FLC","FRC","RC","SL","SR","TFL","TFR","TFC","TC","TRL","TRR","TSL","TSR","TRC","LFE2","BFL","BFR","BFC"] },
+      "2.0": { desc: "2.0 Stereo — 2 Channels", ch: ["FL","FR"] },
+      "virtualizer": { desc: "Headphone Virtualizer Binaural — 2 Channels", ch: ["FL","FR"] },
+      "1.0": { desc: "1.0 Mono — 1 Channel", ch: ["FC"] }
+    };
+
+    const layoutSelect = document.getElementById("layoutSelect");
+    const swapCheck = document.getElementById("swapSurroundsCheck");
+    const layoutTitleText = document.getElementById("layoutTitleText");
+    const channelPills = document.getElementById("channelPills");
+
+    function updateLayoutPreview() {
+      const spec = LAYOUT_SPECS[layoutSelect.value] || LAYOUT_SPECS["9.1.6"];
+      const swap = swapCheck.checked;
+      layoutTitleText.textContent = spec.desc + (swap ? " [Surrounds Swapped]" : "");
+      channelPills.innerHTML = "";
+      spec.ch.forEach((c, i) => {
+        let label = c;
+        if (swap) {
+          if (c === "RL") label = "SL";
+          else if (c === "RR") label = "SR";
+          else if (c === "SL") label = "RL";
+          else if (c === "SR") label = "RR";
+        }
+        const span = document.createElement("span");
+        span.className = "pill";
+        span.textContent = `${i + 1}: ${label}`;
+        channelPills.appendChild(span);
+      });
+    }
+
+    layoutSelect.addEventListener("change", updateLayoutPreview);
+    swapCheck.addEventListener("change", updateLayoutPreview);
+    updateLayoutPreview();
+  </script>
+</body>
+</html>
