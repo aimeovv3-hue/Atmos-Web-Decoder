@@ -2,424 +2,1372 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dolby TrueHD & E-AC-3 JOC (Atmos) Web Decoder — WASM SIMD128</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Atmos 3D Web Decoder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-primary: #0b0f19;
-      --bg-card: #131b2e;
-      --bg-input: #0e1525;
-      --border: #23304d;
-      --accent: #3b82f6;
-      --accent-glow: rgba(59, 130, 246, 0.35);
-      --success: #10b981;
-      --text-main: #f1f5f9;
-      --text-muted: #94a3b8;
+      --bg-main: #0f0d13;
+      --bg-card: #141218;
+      --bg-elevated: #1d1b20;
+      --bg-dropdown: #211f26;
+      --border-subtle: #36343b;
+      --border-focus: #d0bcff;
+      --accent-lavender: #d0bcff;
+      --accent-lavender-ink: #381e72;
+      --accent-purple-pill: #48388a;
+      --accent-selected-row: #5c3d59;
+      --accent-coral: #f2b8b5;
+      --accent-coral-ink: #601410;
+      --accent-download: #443f57;
+      --text-primary: #e6e0e9;
+      --text-secondary: #cac4d0;
+      --text-muted: #938f99;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: var(--bg-primary);
-      color: var(--text-main);
-      padding: 24px 16px;
+      background-color: var(--bg-main);
+      color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 28px 16px 40px;
+    }
+
+    .app-container {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    /* Header Title */
+    .main-title {
+      text-align: center;
+      font-size: 2.05rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      line-height: 1.18;
+      color: #ffffff;
+      margin-bottom: 4px;
+    }
+
+    /* Real-time Speed Floating Pill */
+    .speed-badge-wrapper {
+      display: none;
+      justify-content: center;
+      margin-top: -4px;
+      margin-bottom: 2px;
+      animation: fadeIn 0.2s ease-out;
+    }
+
+    .speed-badge-wrapper.active {
+      display: flex;
+    }
+
+    .speed-badge {
+      background: linear-gradient(180deg, #4b3b8f 0%, #3f317a 100%);
+      border: 1px solid rgba(208, 188, 255, 0.22);
+      border-radius: 18px;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 220px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    }
+
+    .speed-badge svg {
+      width: 26px;
+      height: 26px;
+      color: #eaddff;
+      flex-shrink: 0;
+    }
+
+    .speed-badge-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 1;
+    }
+
+    .speed-fps-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 0.02em;
+    }
+
+    .speed-fps-label {
+      font-size: 0.84rem;
+      color: #d0bcff;
+      margin-top: 2px;
+      font-weight: 500;
+    }
+
+    /* Standard Card */
+    .m3-card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Dashed Dropzone */
+    .dropzone {
+      border: 1.5px dashed #79747e;
+      border-radius: 14px;
+      padding: 28px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      cursor: pointer;
+      transition: border-color 0.2s, background-color 0.2s;
+      background-color: rgba(255, 255, 255, 0.01);
+      user-select: none;
+    }
+
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--accent-lavender);
+      background-color: rgba(208, 188, 255, 0.05);
+    }
+
+    .dropzone.compact {
+      padding: 24px 20px;
+    }
+
+    .dropzone-icon {
+      width: 38px;
+      height: 38px;
+      color: var(--accent-lavender);
+      flex-shrink: 0;
+    }
+
+    .dropzone-text-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .dropzone-text-sub {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-top: 3px;
+      line-height: 1.35;
+    }
+
+    /* File Queue Row */
+    .file-queue-section {
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+      padding-top: 4px;
+    }
+
+    .file-queue-section.visible {
+      display: flex;
+    }
+
+    .file-item-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 4px 2px;
+    }
+
+    .file-item-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .file-status-icon {
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: var(--text-secondary);
+    }
+
+    /* Material 3 Wavy/Circular Spinner */
+    .m3-spinner {
+      width: 28px;
+      height: 28px;
+      animation: rotateSpinner 1.35s linear infinite;
+      color: var(--accent-lavender);
+    }
+
+    @keyframes rotateSpinner {
+      100% { transform: rotate(360deg); }
+    }
+
+    .file-name-mono {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.92rem;
+      color: var(--text-primary);
+      word-break: break-word;
+      line-height: 1.4;
+    }
+
+    .file-item-right {
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .file-state-label {
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .file-frames-sub {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      margin-top: 2px;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+
+    /* Action Pill Buttons (Play / Cancel) */
+    .queue-actions-row {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .pill-btn {
+      border: none;
+      border-radius: 999px;
+      height: 46px;
+      padding: 0 28px;
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      cursor: pointer;
+      transition: transform 0.12s ease, filter 0.15s ease;
+    }
+
+    .pill-btn:active {
+      transform: scale(0.97);
+    }
+
+    .pill-btn-play {
+      background-color: var(--accent-lavender);
+      color: var(--accent-lavender-ink);
+      min-width: 104px;
+    }
+
+    .pill-btn-cancel {
+      background-color: var(--accent-coral);
+      color: var(--accent-coral-ink);
+      padding: 0 24px;
+    }
+
+    /* Info Note Footer inside Input Card */
+    .local-info-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--text-muted);
+      font-size: 0.87rem;
+      line-height: 1.38;
+      padding-top: 2px;
+    }
+
+    .local-info-row svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      color: var(--text-muted);
+    }
+
+    /* Decoded Audio Files Card */
+    .decoded-card {
+      display: none;
+    }
+
+    .decoded-card.visible {
+      display: flex;
+    }
+
+    .decoded-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 2px 2px 4px;
+    }
+
+    .decoded-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 1.08rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .decoded-header-left svg {
+      width: 24px;
+      height: 24px;
+      color: var(--text-primary);
+    }
+
+    .decoded-item-box {
+      border: 1px solid var(--border-subtle);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      background-color: rgba(255, 255, 255, 0.01);
+    }
+
+    .decoded-filename {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.93rem;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .decoded-frames-count {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-top: -6px;
+    }
+
+    .download-btn-wrapper {
+      display: flex;
+      justify-content: center;
+      margin: 2px 0;
+    }
+
+    .pill-btn-download {
+      background-color: var(--accent-download);
+      color: #eaddff;
+      text-decoration: none;
+      height: 44px;
+      padding: 0 24px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.93rem;
+      font-weight: 600;
+      border: 1px solid rgba(208, 188, 255, 0.16);
+    }
+
+    .pill-btn-download svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .audio-player-container audio {
+      width: 100%;
+      height: 44px;
+      border-radius: 999px;
+      outline: none;
+    }
+
+    /* Outlined Floating Label Field (Material 3) */
+    .m3-field-wrapper {
+      position: relative;
+      width: 100%;
+    }
+
+    .m3-floating-label {
+      position: absolute;
+      top: -9px;
+      left: 12px;
+      background-color: var(--bg-card);
+      padding: 0 6px;
+      font-size: 0.76rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      z-index: 2;
+      pointer-events: none;
+      transition: color 0.15s;
+    }
+
+    .m3-field-wrapper.open .m3-floating-label {
+      color: var(--accent-lavender);
+    }
+
+    .m3-select-trigger {
+      width: 100%;
+      min-height: 56px;
+      background-color: transparent;
+      border: 1.5px solid #79747e;
+      border-radius: 8px;
+      padding: 14px 16px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      text-align: left;
+      transition: border-color 0.15s;
+    }
+
+    .m3-field-wrapper.open .m3-select-trigger,
+    .m3-select-trigger:focus {
+      border-color: var(--accent-lavender);
+      outline: none;
+    }
+
+    .m3-select-trigger svg {
+      width: 20px;
+      height: 20px;
+      color: var(--text-secondary);
+      transition: transform 0.2s;
+    }
+
+    .m3-field-wrapper.open .m3-select-trigger svg {
+      transform: rotate(180deg);
+      color: var(--accent-lavender);
+    }
+
+    /* Rich Custom Dropdown Menu (Shows layout title + channel map underneath) */
+    .m3-dropdown-menu {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 0;
+      width: 100%;
+      max-height: 360px;
+      overflow-y: auto;
+      background-color: var(--bg-dropdown);
+      border: 1px solid #49454f;
+      border-radius: 16px;
+      padding: 8px;
+      z-index: 50;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .m3-field-wrapper.open .m3-dropdown-menu {
+      display: flex;
+    }
+
+    .m3-dropdown-option {
+      padding: 10px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      transition: background-color 0.14s;
+    }
+
+    .m3-dropdown-option:hover {
+      background-color: rgba(208, 188, 255, 0.08);
+    }
+
+    .m3-dropdown-option.selected {
+      background-color: var(--accent-selected-row);
+    }
+
+    .option-check-icon {
+      width: 18px;
+      height: 18px;
+      margin-top: 3px;
+      color: #ffffff;
+      flex-shrink: 0;
+      opacity: 0;
+    }
+
+    .m3-dropdown-option.selected .option-check-icon {
+      opacity: 1;
+    }
+
+    .option-text-group {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .option-title {
+      font-size: 0.96rem;
+      font-weight: 600;
+      color: #ffffff;
+    }
+
+    .option-channels {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      line-height: 1.35;
+    }
+
+    /* Advanced Options Accordion */
+    .advanced-toggle-btn {
+      width: 100%;
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 0.98rem;
+      font-weight: 600;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+    }
+
+    .advanced-toggle-btn svg {
+      width: 20px;
+      height: 20px;
+      color: var(--text-secondary);
+      transition: transform 0.2s ease;
+    }
+
+    .advanced-toggle-btn.open svg {
+      transform: rotate(180deg);
+    }
+
+    .advanced-panel {
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+      padding-left: 16px;
+      padding-top: 4px;
+    }
+
+    .advanced-panel.open {
+      display: flex;
+    }
+
+    /* Native Select / Input in Outlined M3 Style */
+    .m3-native-select,
+    .m3-native-input {
+      width: 100%;
+      height: 54px;
+      background-color: transparent;
+      border: 1px solid #79747e;
+      border-radius: 6px;
+      padding: 0 14px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 0.96rem;
+      outline: none;
+      appearance: none;
+    }
+
+    .m3-native-select:focus,
+    .m3-native-input:focus {
+      border-color: var(--accent-lavender);
+    }
+
+    .m3-native-select option {
+      background-color: var(--bg-dropdown);
+      color: var(--text-primary);
+    }
+
+    .select-chevron-overlay {
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: var(--text-secondary);
+      width: 18px;
+      height: 18px;
+    }
+
+    /* Material 3 Toggle Switch Row */
+    .m3-switch-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      user-select: none;
+      padding: 2px 0;
+    }
+
+    .m3-switch-input {
+      display: none;
+    }
+
+    .m3-switch-track {
+      width: 52px;
+      height: 30px;
+      background-color: #36343b;
+      border: 2px solid #938f99;
+      border-radius: 999px;
+      position: relative;
+      transition: background-color 0.2s, border-color 0.2s;
+      flex-shrink: 0;
+    }
+
+    .m3-switch-thumb {
+      width: 16px;
+      height: 16px;
+      background-color: #938f99;
+      border-radius: 50%;
+      position: absolute;
+      top: 50%;
+      left: 6px;
+      transform: translateY(-50%);
+      transition: transform 0.2s, width 0.15s, height 0.15s, background-color 0.2s;
+    }
+
+    .m3-switch-input:checked + .m3-switch-track {
+      background-color: var(--accent-lavender);
+      border-color: var(--accent-lavender);
+    }
+
+    .m3-switch-input:checked + .m3-switch-track .m3-switch-thumb {
+      width: 22px;
+      height: 22px;
+      background-color: var(--accent-lavender-ink);
+      transform: translate(20px, -50%);
+    }
+
+    .m3-switch-label {
+      font-size: 0.92rem;
+      color: var(--text-primary);
+      line-height: 1.35;
+    }
+
+    .m3-switch-sub {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      margin-top: 2px;
+    }
+
+    /* Load Eruda Button */
+    .eruda-btn {
+      width: 100%;
+      height: 44px;
+      border-radius: 999px;
+      background-color: #4a4458;
+      border: none;
+      color: #eaddff;
+      font-family: inherit;
+      font-size: 0.92rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+
+    .eruda-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* Optional Live Telemetry Log Box */
+    .telemetry-log-box {
+      display: none;
+      background-color: #0b090e;
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.77rem;
+      color: #a8c7fa;
+      max-height: 160px;
+      overflow-y: auto;
       line-height: 1.5;
+      white-space: pre-wrap;
     }
-    .container { max-width: 960px; margin: 0 auto; }
-    .header {
-      display: flex; align-items: center; justify-content: space-between;
-      border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px;
-      flex-wrap: wrap; gap: 10px;
+
+    .telemetry-log-box.visible {
+      display: block;
     }
-    .header h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; }
-    .badge {
-      background: rgba(59, 130, 246, 0.15); color: #60a5fa;
-      border: 1px solid rgba(59, 130, 246, 0.4);
-      padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600;
+
+    /* Footer */
+    .app-footer {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      line-height: 1.48;
+      padding: 0 6px;
     }
-    .card {
-      background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 12px; padding: 20px; margin-bottom: 20px;
+
+    .app-footer a {
+      color: #a8c7fa;
+      text-decoration: underline;
     }
-    .card-title {
-      font-size: 0.95rem; font-weight: 600; text-transform: uppercase;
-      letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 16px;
-    }
-    .grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;
-    }
-    label { display: block; font-size: 0.82rem; font-weight: 500; color: var(--text-muted); margin-bottom: 6px; }
-    select, input[type="number"], input[type="file"] {
-      width: 100%; background: var(--bg-input); color: var(--text-main);
-      border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
-      font-size: 0.9rem; outline: none;
-    }
-    select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
-    .layout-info-box {
-      margin-top: 14px; background: var(--bg-input); border: 1px solid var(--border);
-      border-radius: 8px; padding: 12px 14px; font-size: 0.85rem;
-    }
-    .channel-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-    .pill {
-      background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
-      padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-family: monospace;
-    }
-    .checkbox-row {
-      display: flex; flex-wrap: wrap; gap: 18px; margin-top: 16px; padding-top: 14px;
-      border-top: 1px solid var(--border);
-    }
-    .checkbox-item { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer; }
-    .btn-primary {
-      width: 100%; background: var(--accent); color: #fff; border: none;
-      padding: 13px 20px; border-radius: 8px; font-size: 0.95rem; font-weight: 600;
-      cursor: pointer; transition: opacity 0.15s;
-    }
-    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
-    .stats-bar {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 14px;
-    }
-    .stat-box {
-      background: var(--bg-input); border: 1px solid var(--border);
-      border-radius: 8px; padding: 10px 12px; text-align: center;
-    }
-    .stat-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; }
-    .stat-val { font-size: 1.15rem; font-weight: 700; font-family: monospace; color: #60a5fa; }
-    .progress-track {
-      width: 100%; height: 12px; background: var(--bg-input);
-      border-radius: 999px; overflow: hidden; border: 1px solid var(--border);
-    }
-    .progress-fill {
-      height: 100%; width: 0%; background: linear-gradient(90deg, #3b82f6, #10b981);
-      transition: width 0.08s linear;
-    }
-    pre.console {
-      background: #070a12; border: 1px solid var(--border); border-radius: 8px;
-      padding: 12px; font-size: 0.78rem; color: #a7f3d0; font-family: monospace;
-      max-height: 200px; overflow-y: auto; white-space: pre-wrap; margin-top: 12px;
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
+
+  <main class="app-container">
+    <!-- Title -->
+    <h1 class="main-title">Dolby Atmos 3D<br>Web Decoder</h1>
+
+    <!-- Real-Time FPS Badge (Visible while processing) -->
+    <div id="speedBadgeWrapper" class="speed-badge-wrapper">
+      <div class="speed-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 14l4-4"/>
+          <path d="M3.34 19a10 10 0 1 1 17.32 0"/>
+        </svg>
+        <div class="speed-badge-content">
+          <div id="liveFpsText" class="speed-fps-value">0.0 fps</div>
+          <div class="speed-fps-label">Real-time speed</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 1: Input File Dropzone & Active Queue -->
+    <section class="m3-card">
+      <input type="file" id="fileInput" accept=".m4a,.mp4,.ec3,.eac3,.thd,.mlp,.ac3" hidden />
+
+      <div id="dropzone" class="dropzone">
+        <div id="dropzoneIconContainer">
+          <!-- Default Upload File Icon -->
+          <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <polyline points="9 15 12 12 15 15"/>
+          </svg>
+        </div>
+        <div id="dropzoneTextContainer">
+          <div class="dropzone-text-title">Select input files</div>
+          <div class="dropzone-text-sub">Drag &amp; drop or click to<br>browse (.m4a, .ec3, .thd)</div>
+        </div>
+      </div>
+
+      <!-- Selected File Row + Play/Cancel Button -->
+      <div id="fileQueueSection" class="file-queue-section">
+        <div class="file-item-row">
+          <div class="file-item-left">
+            <div id="fileStatusIcon" class="file-status-icon">
+              <!-- Audio file icon -->
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <circle cx="10" cy="16" r="2"/>
+                <path d="M12 16v-5l3 1"/>
+              </svg>
+            </div>
+            <div id="selectedFileName" class="file-name-mono">track.m4a</div>
+          </div>
+
+          <div class="file-item-right">
+            <div id="fileStateLabel" class="file-state-label">Waiting to<br>process</div>
+            <div id="fileFramesSub" class="file-frames-sub"></div>
+          </div>
+        </div>
+
+        <div class="queue-actions-row">
+          <button id="startDecodeBtn" class="pill-btn pill-btn-play" type="button" title="Start Decoding">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="6 4 20 12 6 20 6 4"></polygon>
+            </svg>
+          </button>
+
+          <button id="cancelDecodeBtn" class="pill-btn pill-btn-cancel" type="button" style="display: none;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <div class="local-info-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+        <span>All files are processed locally in your browser</span>
+      </div>
+    </section>
+
+    <!-- Card 2: Decoded Audio Files (Appears on completion) -->
+    <section id="decodedCard" class="m3-card decoded-card">
+      <div class="decoded-header">
+        <div class="decoded-header-left">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+            <polyline points="9 13 11 15 15 11"/>
+          </svg>
+          <span>Decoded audio files</span>
+        </div>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="4" y1="7" x2="20" y2="7"/>
+          <line x1="4" y1="12" x2="16" y2="12"/>
+          <line x1="4" y1="17" x2="12" y2="17"/>
+        </svg>
+      </div>
+
+      <div id="decodedItemsContainer"></div>
+    </section>
+
+    <!-- Card 3: Atmos Spatial Layout & Advanced DSP Options -->
+    <section class="m3-card">
+      <!-- Custom M3 Outlined Dropdown for Atmos/Cavern Layouts -->
+      <div id="layoutDropdownWrapper" class="m3-field-wrapper">
+        <span class="m3-floating-label">Target output layout (Atmos / Cavern)</span>
+        <button id="layoutDropdownTrigger" type="button" class="m3-select-trigger">
+          <span id="layoutSelectedTitle">9.1.6 Atmos • 16ch</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+
+        <div id="layoutDropdownMenu" class="m3-dropdown-menu">
+          <!-- Populated dynamically with Atmos layouts and channel arrays -->
+        </div>
+      </div>
+
+      <!-- Advanced Options Accordion -->
       <div>
-        <h1>Dolby TrueHD & E-AC-3 JOC Atmos Decoder</h1>
-        <p style="font-size:0.84rem; color:var(--text-muted);">Harletty Bridge v0.9.0 • WASM AOT + SIMD128 • Multi-Channel Interleaved WAV</p>
-      </div>
-      <span class="badge">TRUEHD DEFAULT • 7000+ FRAMES/MIN</span>
-    </div>
+        <button id="advancedToggleBtn" type="button" class="advanced-toggle-btn">
+          <span>Advanced options</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
 
-    <div class="card">
-      <div class="card-title">1. Source Stream & Decoder Engine</div>
-      <div class="grid">
-        <div>
-          <label for="fileInput">Input File (.m4a, .mp4, .ec3, .eac3, .thd, .mlp)</label>
-          <input type="file" id="fileInput" accept=".m4a,.mp4,.ec3,.eac3,.thd,.truehd,.mlp,.ac3,.dtshd,.iamf,.wav" />
-        </div>
-        <div>
-          <label for="codecSelect">Decoder Codec Family (MMH Mode)</label>
-          <select id="codecSelect">
-            <option value="truehd" selected>Dolby TrueHD (Atmos MLP + Auto E-AC-3 JOC .m4a)</option>
-            <option value="eac3">Dolby Digital Plus (E-AC-3 JOC 16-Object Atmos)</option>
-            <option value="ac3">Dolby Digital (AC-3 Core + Dependent Substream Merge)</option>
-            <option value="mat">Dolby MAT 2.0 (IEC 61937 Atmos Transport)</option>
-            <option value="dtsx">DTS:X / DTS-HD Master Audio (DCA Bridge)</option>
-            <option value="iamf">Eclipsa Audio / IAMF (Immersive Audio Model)</option>
-            <option value="auro">Auro-3D (Auro Codec Engine)</option>
-            <option value="damf">DAMF (Dolby Atmos Master File)</option>
-          </select>
-        </div>
-        <div>
-          <label for="presentationSelect">Atmos Presentation & Substream Mode</label>
-          <select id="presentationSelect">
-            <option value="0" selected>Atmos Object Decoder (Substream 4 / JOC 16 Objects)</option>
-            <option value="1">Core + Dependent Substream Merge (7.1 Fullband)</option>
-            <option value="2">Core Bed Channels Only (5.1 Bed)</option>
-          </select>
-        </div>
-      </div>
-    </div>
+        <div id="advancedPanel" class="advanced-panel">
+          <!-- PCM Word Size / Bit Depth -->
+          <div class="m3-field-wrapper">
+            <span class="m3-floating-label">PCM word size</span>
+            <select id="bitDepthSelect" class="m3-native-select">
+              <option value="24" selected>24-bit Signed Integer PCM</option>
+              <option value="32">32-bit IEEE Float PCM</option>
+              <option value="16">16-bit Signed Integer PCM</option>
+            </select>
+            <svg class="select-chevron-overlay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
 
-    <div class="card">
-      <div class="card-title">2. Target Speaker Layout & High-Speed DSP Configuration</div>
-      <div class="grid">
-        <div>
-          <label for="layoutSelect">Target Speaker Layout</label>
-          <select id="layoutSelect">
-            <option value="9.1.6" selected>9.1.6 Atmos (16 Channels Interleaved WAV)</option>
-            <option value="objects">16 Raw Atmos Objects (Unmixed Direct OAMD Channels)</option>
-            <option value="7.1.4">7.1.4 Atmos (12 Channels Interleaved)</option>
-            <option value="7.1.6">7.1.6 Atmos (14 Channels Interleaved)</option>
-            <option value="9.1.4">9.1.4 Atmos (14 Channels Interleaved)</option>
-            <option value="9.1.2 side">9.1.2 Side (12 Channels Interleaved)</option>
-            <option value="9.1.2 front">9.1.2 Front (12 Channels Interleaved)</option>
-            <option value="7.1.2 side">7.1.2 Side (10 Channels Interleaved)</option>
-            <option value="7.1.2 front">7.1.2 Front (10 Channels Interleaved)</option>
-            <option value="5.1.6">5.1.6 Atmos (12 Channels Interleaved)</option>
-            <option value="5.1.4">5.1.4 Atmos (10 Channels Interleaved)</option>
-            <option value="5.1.2 side">5.1.2 Side (8 Channels Interleaved)</option>
-            <option value="5.1.2 front">5.1.2 Front (8 Channels Interleaved)</option>
-            <option value="7.1">7.1 Surround (8 Channels Interleaved)</option>
-            <option value="6.2">6.2 Surround (8 Channels Interleaved)</option>
-            <option value="5.1 side">5.1 Side Surround (6 Channels)</option>
-            <option value="5.1 rear">5.1 Rear Surround (6 Channels)</option>
-            <option value="4.1.3">4.1.3 Surround (8 Channels)</option>
-            <option value="4.1.1">4.1.1 Surround (6 Channels)</option>
-            <option value="4.0">4.0 Quadraphonic (4 Channels)</option>
-            <option value="small cinema">Small Cinema (12 Channels)</option>
-            <option value="22.2">22.2 Surround SMPTE 2036-2 (24 Channels)</option>
-            <option value="2.0">2.0 Stereo Downmix (2 Channels)</option>
-            <option value="virtualizer">Headphone Virtualizer Binaural (2 Channels)</option>
-            <option value="1.0">1.0 Mono Center (1 Channel)</option>
-          </select>
-        </div>
-        <div>
-          <label for="bitDepthSelect">WAV Output Bit Depth</label>
-          <select id="bitDepthSelect">
-            <option value="32">32-bit IEEE Float (Zero Clipping / Mastering)</option>
-            <option value="24" selected>24-bit Signed PCM (Studio Standard)</option>
-            <option value="16">16-bit Signed PCM (Standard)</option>
-            <option value="8">8-bit Unsigned PCM</option>
-          </select>
-        </div>
-        <div>
-          <label for="sampleRateSelect">Target Sample Rate</label>
-          <select id="sampleRateSelect">
-            <option value="0" selected>Native Stream Rate (Auto 48kHz / 96kHz)</option>
-            <option value="48000">48,000 Hz</option>
-            <option value="96000">96,000 Hz (TrueHD High-Res)</option>
-          </select>
-        </div>
-        <div>
-          <label for="batchSpeedSelect">Frame Processing Speed (Batch Size)</label>
-          <select id="batchSpeedSelect">
-            <option value="128" selected>Turbo SIMD (128 Frames/Batch • 7,000+ Frames/min)</option>
-            <option value="64">Fast Batch (64 Frames/Batch • High Responsiveness)</option>
-            <option value="32">Balanced Batch (32 Frames/Batch)</option>
-          </select>
-        </div>
-        <div>
-          <label for="drcSelect">Dolby Dynamic Range Control (DRC)</label>
-          <select id="drcSelect">
-            <option value="0" selected>Off (100% Full Dynamic Range)</option>
-            <option value="1">Film Standard</option>
-            <option value="2">Film Light</option>
-            <option value="3">Music Standard</option>
-            <option value="4">Music Light</option>
-          </select>
-        </div>
-        <div>
-          <label for="gainInput">Master Output Gain (dB)</label>
-          <input type="number" id="gainInput" value="0.0" step="0.5" min="-40" max="20" />
+          <!-- Output Sample Rate -->
+          <div class="m3-field-wrapper">
+            <span class="m3-floating-label">Output sample rate</span>
+            <select id="sampleRateSelect" class="m3-native-select">
+              <option value="48000" selected>48000 Hz</option>
+              <option value="44100">44100 Hz</option>
+              <option value="96000">96000 Hz</option>
+            </select>
+            <svg class="select-chevron-overlay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+
+          <!-- JOC Spatial Matrix Gain (dB) -->
+          <div class="m3-field-wrapper">
+            <span class="m3-floating-label">JOC Object Gain (dB)</span>
+            <select id="jocGainSelect" class="m3-native-select">
+              <option value="0" selected>0.0 dB (Unity Reference)</option>
+              <option value="-3">-3.0 dB (Headroom Safe)</option>
+              <option value="1.5">+1.5 dB (Warm Object Presence)</option>
+              <option value="3">+3.0 dB (High Dynamic Boost)</option>
+            </select>
+            <svg class="select-chevron-overlay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+
+          <!-- Exclusive Atmos-Web-Decoder DSP Switches -->
+          <label class="m3-switch-row">
+            <input type="checkbox" id="swapSurroundsToggle" class="m3-switch-input" />
+            <span class="m3-switch-track"><span class="m3-switch-thumb"></span></span>
+            <span class="m3-switch-label">
+              Swap Surrounds (RL/RR ↔ SL/SR)
+              <span class="m3-switch-sub">Remaps rear/side channels for DAWs</span>
+            </span>
+          </label>
+
+          <label class="m3-switch-row">
+            <input type="checkbox" id="trimJocLatencyToggle" class="m3-switch-input" checked />
+            <span class="m3-switch-track"><span class="m3-switch-thumb"></span></span>
+            <span class="m3-switch-label">
+              Trim JOC Filterbank Latency
+              <span class="m3-switch-sub">JOC_LATENCY_SAMPLES phase alignment</span>
+            </span>
+          </label>
+
+          <label class="m3-switch-row">
+            <input type="checkbox" id="lfeLowPassToggle" class="m3-switch-input" />
+            <span class="m3-switch-track"><span class="m3-switch-thumb"></span></span>
+            <span class="m3-switch-label">
+              LFE Low-Pass Separation (120 Hz)
+              <span class="m3-switch-sub">4th-order Linkwitz-Riley sub isolation</span>
+            </span>
+          </label>
+
+          <label class="m3-switch-row">
+            <input type="checkbox" id="printLogsToggle" class="m3-switch-input" />
+            <span class="m3-switch-track"><span class="m3-switch-thumb"></span></span>
+            <span class="m3-switch-label">Print decoder telemetry to logs</span>
+          </label>
+
+          <div id="telemetryLogBox" class="telemetry-log-box">[System] Ready. Select an .m4a (E-AC-3 JOC), .ec3, or .thd (Dolby TrueHD) file.</div>
+
+          <!-- Load Eruda DevTools Button -->
+          <button id="loadErudaBtn" type="button" class="eruda-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="8" y="6" width="8" height="14" rx="4"/>
+              <path d="m19 7-3 2"/>
+              <path d="m5 7 3 2"/>
+              <path d="m19 19-3-2"/>
+              <path d="m5 19 3-2"/>
+              <path d="M20 13h-4"/>
+              <path d="M4 13h4"/>
+              <path d="m10 4 1 2"/>
+              <path d="m14 4-1 2"/>
+            </svg>
+            <span id="loadErudaText">Load Eruda</span>
+          </button>
         </div>
       </div>
+    </section>
 
-      <div class="layout-info-box" id="layoutInfoBox">
-        <div><strong id="layoutTitleText">9.1.6 Atmos — 16 Channels (Bed: 9.1 + Heights: 6)</strong></div>
-        <div class="channel-pills" id="channelPills"></div>
-      </div>
+    <footer class="app-footer">
+      This website uses the <strong>Atmos-Web-Decoder</strong> Spatial JOC &amp; Cavern WASM Engine for local browser rendering. Interleaved multi-channel WAV export preserves full discrete bed + object separation.
+    </footer>
+  </main>
 
-      <div class="checkbox-row">
-        <label class="checkbox-item">
-          <input type="checkbox" id="swapSurroundsCheck" />
-          Swap Surrounds (RL/RR ↔ SL/SR)
-        </label>
-        <label class="checkbox-item">
-          <input type="checkbox" id="trimLatencyCheck" checked />
-          Trim JOC Filterbank Latency (JOC_LATENCY_SAMPLES)
-        </label>
-        <label class="checkbox-item">
-          <input type="checkbox" id="lfeSepCheck" />
-          LFE Low-Pass Separation
-        </label>
-      </div>
-    </div>
+  <script>
+    // =========================================================================
+    // 1. ATMOS / CAVERN LAYOUT DEFINITIONS (YOUR EXCLUSIVE DECODER CONFIGS)
+    // =========================================================================
+    const ATMOS_LAYOUTS = [
+      {
+        id: '9.1.6',
+        name: '9.1.6 Atmos • 16ch',
+        channels: 16,
+        desc: '16ch – L, R, C, LFE, SL, SR, RL, RR, WL, WR, TFL, TFR, TML, TMR, TRL, TRR'
+      },
+      {
+        id: '7.1.4',
+        name: '7.1.4 Atmos • 12ch',
+        channels: 12,
+        desc: '12ch – L, R, C, LFE, SL, SR, RL, RR, TFL, TFR, TRL, TRR'
+      },
+      {
+        id: '7.1.2',
+        name: '7.1.2 Atmos • 10ch',
+        channels: 10,
+        desc: '10ch – L, R, C, LFE, SL, SR, RL, RR, TML, TMR'
+      },
+      {
+        id: '5.1.4',
+        name: '5.1.4 Atmos • 10ch',
+        channels: 10,
+        desc: '10ch – L, R, C, LFE, SL, SR, TFL, TFR, TRL, TRR'
+      },
+      {
+        id: '5.1.2',
+        name: '5.1.2 Atmos • 8ch',
+        channels: 8,
+        desc: '8ch – L, R, C, LFE, SL, SR, TML, TMR'
+      },
+      {
+        id: '7.1',
+        name: '7.1 Surround • 8ch',
+        channels: 8,
+        desc: '8ch – L, R, C, LFE, SL, SR, RL, RR'
+      },
+      {
+        id: '5.1',
+        name: '5.1 Surround • 6ch',
+        channels: 6,
+        desc: '6ch – L, R, C, LFE, SL, SR'
+      },
+      {
+        id: '22.2',
+        name: '22.2 Surround • 24ch',
+        channels: 24,
+        desc: '24ch – FL, FR, FC, LFE1, BL, BR, FLc, FRc, BC, LFE2, SiL, SiR, TpFL, TpFR, TpFC, TpC, TpBL, TpBR, TpSiL, TpSiR, TpBC, BtFC, BtFL, BtFR'
+      },
+      {
+        id: '2.0',
+        name: 'Stereo • 2/0.0',
+        channels: 2,
+        desc: '2ch – L, R (Phase-Locked Downmix)'
+      }
+    ];
 
-    <div class="card">
-      <div class="card-title">3. Real-Time Decoding Telemetry</div>
-      <div class="stats-bar">
-        <div class="stat-box">
-          <div class="stat-label">Frames Processed</div>
-          <div class="stat-val" id="framesStat">0 / 0</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Speed (FPS)</div>
-          <div class="stat-val" id="fpsStat">0 FPS</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Frames / Min</div>
-          <div class="stat-val" id="fpmStat">0 / min</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Elapsed / ETA</div>
-          <div class="stat-val" id="etaStat">0.0s</div>
-        </div>
-      </div>
-      <div class="progress-track">
-        <div class="progress-fill" id="progressFill"></div>
-      </div>
-      <div style="margin-top: 16px;">
-        <button class="btn-primary" id="decodeBtn">Decode & Export Interleaved Multi-Channel WAV</button>
-      </div>
-      <pre class="console" id="consoleBox">[System] Ready. Select an .m4a (E-AC-3 JOC), .ec3, or .thd (Dolby TrueHD) file.</pre>
-    </div>
-  </div>
+    let selectedLayout = ATMOS_LAYOUTS[0]; // Default 9.1.6 Atmos (16ch)
+    let currentFile = null;
+    let decoderWorker = null;
+    let isProcessing = false;
 
-  <script type="module">
-    const LAYOUT_SPECS = {
-      "9.1.6": { desc: "9.1.6 Atmos — 16 Channels Interleaved (Bed 9.1 + 6 Top Heights)", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","WL","WR","TFL","TFR","TSL","TSR","TRL","TRR"] },
-      "objects": { desc: "16 Raw Atmos Objects — Direct OAMD Extraction (Unmixed)", ch: ["OBJ1","OBJ2","OBJ3","OBJ4","OBJ5","OBJ6","OBJ7","OBJ8","OBJ9","OBJ10","OBJ11","OBJ12","OBJ13","OBJ14","OBJ15","OBJ16"] },
-      "7.1.4": { desc: "7.1.4 Atmos — 12 Channels Interleaved (Bed 7.1 + 4 Top Heights)", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","TFL","TFR","TRL","TRR"] },
-      "7.1.6": { desc: "7.1.6 Atmos — 14 Channels Interleaved (Bed 7.1 + 6 Top Heights)", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","TFL","TFR","TSL","TSR","TRL","TRR"] },
-      "9.1.4": { desc: "9.1.4 Atmos — 14 Channels Interleaved (Bed 9.1 + 4 Top Heights)", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","WL","WR","TFL","TFR","TRL","TRR"] },
-      "9.1.2 side": { desc: "9.1.2 Side — 12 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","WL","WR","TSL","TSR"] },
-      "9.1.2 front": { desc: "9.1.2 Front — 12 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","WL","WR","TFL","TFR"] },
-      "7.1.2 side": { desc: "7.1.2 Side — 10 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","TSL","TSR"] },
-      "7.1.2 front": { desc: "7.1.2 Front — 10 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR","TFL","TFR"] },
-      "5.1.6": { desc: "5.1.6 Atmos — 12 Channels Interleaved", ch: ["FL","FR","FC","LFE","SL","SR","TFL","TFR","TSL","TSR","TRL","TRR"] },
-      "5.1.4": { desc: "5.1.4 Atmos — 10 Channels Interleaved", ch: ["FL","FR","FC","LFE","SL","SR","TFL","TFR","TRL","TRR"] },
-      "5.1.2 side": { desc: "5.1.2 Side — 8 Channels Interleaved", ch: ["FL","FR","FC","LFE","SL","SR","TSL","TSR"] },
-      "5.1.2 front": { desc: "5.1.2 Front — 8 Channels Interleaved", ch: ["FL","FR","FC","LFE","SL","SR","TFL","TFR"] },
-      "7.1": { desc: "7.1 Surround — 8 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","SL","SR"] },
-      "6.2": { desc: "6.2 Surround — 8 Channels Interleaved (Dual LFE)", ch: ["FL","FR","FC","LFE","RC","LFE2","SL","SR"] },
-      "5.1 side": { desc: "5.1 Side Surround — 6 Channels", ch: ["FL","FR","FC","LFE","SL","SR"] },
-      "5.1 rear": { desc: "5.1 Rear Surround — 6 Channels", ch: ["FL","FR","FC","LFE","RL","RR"] },
-      "4.1.3": { desc: "4.1.3 Surround — 8 Channels", ch: ["FL","FR","LFE","RL","RR","TFL","TFR","TC"] },
-      "4.1.1": { desc: "4.1.1 Surround — 6 Channels", ch: ["FL","FR","LFE","RL","RR","TC"] },
-      "4.0": { desc: "4.0 Quadraphonic — 4 Channels", ch: ["FL","FR","RL","RR"] },
-      "small cinema": { desc: "Small Cinema — 12 Channels", ch: ["FL","FR","FC","LFE","SL","SR","RL","RR","WL","WR","FLC","FRC"] },
-      "22.2": { desc: "22.2 Surround (SMPTE 2036-2) — 24 Channels Interleaved", ch: ["FL","FR","FC","LFE","RL","RR","FLC","FRC","RC","SL","SR","TFL","TFR","TFC","TC","TRL","TRR","TSL","TSR","TRC","LFE2","BFL","BFR","BFC"] },
-      "2.0": { desc: "2.0 Stereo — 2 Channels", ch: ["FL","FR"] },
-      "virtualizer": { desc: "Headphone Virtualizer Binaural — 2 Channels", ch: ["FL","FR"] },
-      "1.0": { desc: "1.0 Mono — 1 Channel", ch: ["FC"] }
-    };
+    // DOM Elements
+    const fileInput = document.getElementById('fileInput');
+    const dropzone = document.getElementById('dropzone');
+    const dropzoneIconContainer = document.getElementById('dropzoneIconContainer');
+    const dropzoneTextContainer = document.getElementById('dropzoneTextContainer');
+    const fileQueueSection = document.getElementById('fileQueueSection');
+    const fileStatusIcon = document.getElementById('fileStatusIcon');
+    const selectedFileName = document.getElementById('selectedFileName');
+    const fileStateLabel = document.getElementById('fileStateLabel');
+    const fileFramesSub = document.getElementById('fileFramesSub');
+    const startDecodeBtn = document.getElementById('startDecodeBtn');
+    const cancelDecodeBtn = document.getElementById('cancelDecodeBtn');
+    const speedBadgeWrapper = document.getElementById('speedBadgeWrapper');
+    const liveFpsText = document.getElementById('liveFpsText');
+    const decodedCard = document.getElementById('decodedCard');
+    const decodedItemsContainer = document.getElementById('decodedItemsContainer');
 
-    const fileInput = document.getElementById("fileInput");
-    const codecSelect = document.getElementById("codecSelect");
-    const presentationSelect = document.getElementById("presentationSelect");
-    const layoutSelect = document.getElementById("layoutSelect");
-    const bitDepthSelect = document.getElementById("bitDepthSelect");
-    const sampleRateSelect = document.getElementById("sampleRateSelect");
-    const batchSpeedSelect = document.getElementById("batchSpeedSelect");
-    const drcSelect = document.getElementById("drcSelect");
-    const gainInput = document.getElementById("gainInput");
-    const swapCheck = document.getElementById("swapSurroundsCheck");
-    const trimLatencyCheck = document.getElementById("trimLatencyCheck");
-    const lfeSepCheck = document.getElementById("lfeSepCheck");
-    const layoutTitleText = document.getElementById("layoutTitleText");
-    const channelPills = document.getElementById("channelPills");
-    const decodeBtn = document.getElementById("decodeBtn");
-    const consoleBox = document.getElementById("consoleBox");
-    const framesStat = document.getElementById("framesStat");
-    const fpsStat = document.getElementById("fpsStat");
-    const fpmStat = document.getElementById("fpmStat");
-    const etaStat = document.getElementById("etaStat");
-    const progressFill = document.getElementById("progressFill");
+    // Layout Dropdown Elements
+    const layoutDropdownWrapper = document.getElementById('layoutDropdownWrapper');
+    const layoutDropdownTrigger = document.getElementById('layoutDropdownTrigger');
+    const layoutSelectedTitle = document.getElementById('layoutSelectedTitle');
+    const layoutDropdownMenu = document.getElementById('layoutDropdownMenu');
 
-    function logLine(msg) {
-      consoleBox.textContent += "\n" + msg;
-      consoleBox.scrollTop = consoleBox.scrollHeight;
+    // Advanced Options Elements
+    const advancedToggleBtn = document.getElementById('advancedToggleBtn');
+    const advancedPanel = document.getElementById('advancedPanel');
+    const bitDepthSelect = document.getElementById('bitDepthSelect');
+    const sampleRateSelect = document.getElementById('sampleRateSelect');
+    const jocGainSelect = document.getElementById('jocGainSelect');
+    const swapSurroundsToggle = document.getElementById('swapSurroundsToggle');
+    const trimJocLatencyToggle = document.getElementById('trimJocLatencyToggle');
+    const lfeLowPassToggle = document.getElementById('lfeLowPassToggle');
+    const printLogsToggle = document.getElementById('printLogsToggle');
+    const telemetryLogBox = document.getElementById('telemetryLogBox');
+    const loadErudaBtn = document.getElementById('loadErudaBtn');
+    const loadErudaText = document.getElementById('loadErudaText');
+
+    function appendLog(msg) {
+      const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      console.log(line);
+      telemetryLogBox.textContent += `\n${msg}`;
+      telemetryLogBox.scrollTop = telemetryLogBox.scrollHeight;
     }
 
-    function updateLayoutPreview() {
-      const spec = LAYOUT_SPECS[layoutSelect.value] || LAYOUT_SPECS["9.1.6"];
-      const swap = swapCheck.checked;
-      layoutTitleText.textContent = spec.desc + (swap ? " [Surrounds Swapped]" : "");
-      channelPills.innerHTML = "";
-      spec.ch.forEach((c, i) => {
-        let label = c;
-        if (swap) {
-          if (c === "RL") label = "SL";
-          else if (c === "RR") label = "SR";
-          else if (c === "SL") label = "RL";
-          else if (c === "SR") label = "RR";
-        }
-        const span = document.createElement("span");
-        span.className = "pill";
-        span.textContent = `${i + 1}: ${label}`;
-        channelPills.appendChild(span);
+    // =========================================================================
+    // 2. RENDER CUSTOM LAYOUT SELECTOR (WITH CHANNEL MAPS)
+    // =========================================================================
+    function renderLayoutMenu() {
+      layoutDropdownMenu.innerHTML = '';
+      ATMOS_LAYOUTS.forEach((layout) => {
+        const item = document.createElement('div');
+        item.className = `m3-dropdown-option ${layout.id === selectedLayout.id ? 'selected' : ''}`;
+        item.innerHTML = `
+          <svg class="option-check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <div class="option-text-group">
+            <div class="option-title">${layout.name}</div>
+            <div class="option-channels">${layout.desc}</div>
+          </div>
+        `;
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          selectedLayout = layout;
+          layoutSelectedTitle.textContent = layout.name;
+          layoutDropdownWrapper.classList.remove('open');
+          renderLayoutMenu();
+        });
+        layoutDropdownMenu.appendChild(item);
       });
     }
 
-    layoutSelect.addEventListener("change", updateLayoutPreview);
-    swapCheck.addEventListener("change", updateLayoutPreview);
-    updateLayoutPreview();
+    renderLayoutMenu();
 
-    let worker = null;
+    layoutDropdownTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      layoutDropdownWrapper.classList.toggle('open');
+    });
 
-    decodeBtn.addEventListener("click", async () => {
-      const file = fileInput.files?.[0];
-      if (!file) {
-        logLine("[Error] Please select an audio file (.m4a, .ec3, .thd, .mlp) first.");
+    document.addEventListener('click', () => {
+      layoutDropdownWrapper.classList.remove('open');
+    });
+
+    // Accordion Toggle
+    advancedToggleBtn.addEventListener('click', () => {
+      advancedToggleBtn.classList.toggle('open');
+      advancedPanel.classList.toggle('open');
+    });
+
+    printLogsToggle.addEventListener('change', () => {
+      telemetryLogBox.classList.toggle('visible', printLogsToggle.checked);
+    });
+
+    // Load Eruda Mobile Console
+    loadErudaBtn.addEventListener('click', () => {
+      if (window.eruda) {
+        window.eruda.show();
         return;
       }
+      loadErudaText.textContent = 'Loading Eruda...';
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/eruda';
+      script.onload = () => {
+        window.eruda.init();
+        window.eruda.show();
+        loadErudaText.textContent = 'Eruda Active';
+      };
+      document.body.appendChild(script);
+    });
 
-      decodeBtn.disabled = true;
-      progressFill.style.width = "0%";
-      logLine(`[Job] Reading '${file.name}' (${(file.size / (1024 * 1024)).toFixed(2)} MB)...`);
+    // =========================================================================
+    // 3. FILE SELECTION & QUEUE UI STATE TRANSITIONS
+    // =========================================================================
+    dropzone.addEventListener('click', () => {
+      if (!isProcessing) fileInput.click();
+    });
 
-      const arrayBuffer = await file.arrayBuffer();
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (!isProcessing) dropzone.classList.add('dragover');
+    });
 
-      const flags = [layoutSelect.value];
-      if (swapCheck.checked) flags.push("ss");
-      flags.push(`codec=${codecSelect.value}`);
-      flags.push(`drc=${drcSelect.value}`);
-      flags.push(`lat=${trimLatencyCheck.checked ? 1 : 0}`);
-      flags.push(`pres=${presentationSelect.value}`);
-      const fullLayoutKey = flags.join("|");
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.classList.remove('dragover');
+    });
 
-      if (worker) worker.terminate();
-      worker = new Worker("./worker.js", { type: "module" });
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      if (!isProcessing && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        handleFileSelected(e.dataTransfer.files[0]);
+      }
+    });
 
-      worker.onmessage = (e) => {
-        const data = e.data;
-        if (data.type === "INIT_OK") {
-          logLine(data.logMsg);
-          framesStat.textContent = `0 / ${data.totalFrames}`;
-        } else if (data.type === "PROGRESS") {
-          const pct = Math.min(100, (data.processed / Math.max(1, data.totalFrames)) * 100);
-          progressFill.style.width = `${pct.toFixed(1)}%`;
-          framesStat.textContent = `${data.processed} / ${data.totalFrames}`;
-          fpsStat.textContent = `${data.fps} FPS`;
-          fpmStat.textContent = `${data.fpm.toLocaleString()} / min`;
-          const remFrames = Math.max(0, data.totalFrames - data.processed);
-          const etaSec = data.fps > 0 ? (remFrames / data.fps).toFixed(1) : "0.0";
-          etaStat.textContent = `${data.elapsedSec.toFixed(1)}s (ETA ${etaSec}s)`;
-        } else if (data.type === "DONE") {
-          progressFill.style.width = "100%";
-          decodeBtn.disabled = false;
-          const baseName = file.name.replace(/\.[^/.]+$/, "");
-          const outName = `${baseName}_${layoutSelect.value.replace(/\s+/g, "_")}_${bitDepthSelect.value}bit.wav`;
-          logLine(`[Success] Export ready: ${outName}`);
-          const url = URL.createObjectURL(data.wavBlob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = outName;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-        } else if (data.type === "ERROR") {
-          decodeBtn.disabled = false;
-          logLine(`[Error] ${data.error}`);
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        handleFileSelected(e.target.files[0]);
+      }
+    });
+
+    function setDropzoneToSelectedState() {
+      dropzone.classList.add('compact');
+      dropzoneIconContainer.innerHTML = `
+        <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 7 7 10 12 5"/>
+          <line x1="15" y1="8" x2="20" y2="8"/>
+          <polyline points="4 17 7 20 12 15"/>
+          <line x1="15" y1="18" x2="20" y2="18"/>
+        </svg>
+      `;
+      dropzoneTextContainer.innerHTML = `
+        <div class="dropzone-text-title">1 file selected</div>
+      `;
+    }
+
+    function setDropzoneToDefaultState() {
+      dropzone.classList.remove('compact');
+      dropzoneIconContainer.innerHTML = `
+        <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="12" y1="18" x2="12" y2="12"/>
+          <polyline points="9 15 12 12 15 15"/>
+        </svg>
+      `;
+      dropzoneTextContainer.innerHTML = `
+        <div class="dropzone-text-title">Select input files</div>
+        <div class="dropzone-text-sub">Drag &amp; drop or click to<br>browse (.m4a, .ec3, .thd)</div>
+      `;
+    }
+
+    function setFileRowWaitingState(file) {
+      fileQueueSection.classList.add('visible');
+      selectedFileName.textContent = file.name;
+      fileStateLabel.innerHTML = 'Waiting to<br>process';
+      fileFramesSub.textContent = '';
+      startDecodeBtn.style.display = 'inline-flex';
+      cancelDecodeBtn.style.display = 'none';
+      fileStatusIcon.innerHTML = `
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <circle cx="10" cy="16" r="2"/>
+          <path d="M12 16v-5l3 1"/>
+        </svg>
+      `;
+    }
+
+    function setFileRowProcessingState() {
+      fileStateLabel.textContent = 'Processing';
+      fileFramesSub.textContent = '0 frames';
+      startDecodeBtn.style.display = 'none';
+      cancelDecodeBtn.style.display = 'inline-flex';
+      speedBadgeWrapper.classList.add('active');
+      liveFpsText.textContent = '0.0 fps';
+
+      // Material 3 Wavy Spinner SVG
+      fileStatusIcon.innerHTML = `
+        <svg class="m3-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <path d="M12 2.5c2.2 0 3.2 1.8 5.1 2.8 1.9 1.1 3.9.4 4.8 2.3.9 1.9-.6 3.5-.6 5.4 0 1.9 1.5 3.5.6 5.4-.9 1.9-2.9 1.2-4.8 2.3-1.9 1-2.9 2.8-5.1 2.8" />
+        </svg>
+      `;
+    }
+
+    function handleFileSelected(file) {
+      currentFile = file;
+      setDropzoneToSelectedState();
+      setFileRowWaitingState(file);
+      appendLog(`[Job] Selected '${file.name}' (${(file.size / (1024 * 1024)).toFixed(2)} MB)`);
+    }
+
+    // =========================================================================
+    // 4. WEB WORKER DECODING & REAL-TIME TELEMETRY ENGINE
+    // =========================================================================
+    function initDecoderWorker() {
+      if (decoderWorker) {
+        decoderWorker.terminate();
+      }
+      decoderWorker = new Worker('./worker.js');
+
+      decoderWorker.onmessage = (e) => {
+        const { type, payload } = e.data;
+
+        if (type === 'LOG') {
+          appendLog(payload.message);
+        } else if (type === 'PROGRESS') {
+          const { framesProcessed, fps } = payload;
+          fileFramesSub.textContent = `${framesProcessed} frames`;
+          liveFpsText.textContent = `${fps.toFixed(1)} fps`;
+        } else if (type === 'DONE') {
+          isProcessing = false;
+          speedBadgeWrapper.classList.remove('active');
+          fileQueueSection.classList.remove('visible');
+          setDropzoneToDefaultState();
+
+          const { wavBlob, totalFrames, outputFileName, sizeMB } = payload;
+          appendLog(`[Done] Exported '${outputFileName}' (${totalFrames} frames, ${sizeMB} MB).`);
+          renderDecodedAudioCard(wavBlob, outputFileName, totalFrames, sizeMB);
+        } else if (type === 'ERROR') {
+          isProcessing = false;
+          speedBadgeWrapper.classList.remove('active');
+          setFileRowWaitingState(currentFile);
+          appendLog(`[Error] ${payload.message}`);
+          alert(`Decoding Error: ${payload.message}`);
         }
       };
 
-      worker.postMessage(
-        {
-          type: "DECODE_FILE",
-          payload: {
-            fileBytes: arrayBuffer,
-            fileName: file.name,
-            layoutKey: fullLayoutKey,
-            bitDepth: parseInt(bitDepthSelect.value, 10),
-            sampleRate: parseInt(sampleRateSelect.value, 10),
-            batchFrames: parseInt(batchSpeedSelect.value, 10),
-            gainDb: parseFloat(gainInput.value || "0"),
-            lfeSep: lfeSepCheck.checked
-          }
-        },
-        [arrayBuffer]
-      );
+      decoderWorker.onerror = (err) => {
+        isProcessing = false;
+        speedBadgeWrapper.classList.remove('active');
+        if (currentFile) setFileRowWaitingState(currentFile);
+        appendLog(`[Worker Fault] ${err.message || 'Unhandled worker exception'}`);
+      };
+    }
+
+    startDecodeBtn.addEventListener('click', async () => {
+      if (!currentFile || isProcessing) return;
+
+      isProcessing = true;
+      setFileRowProcessingState();
+      initDecoderWorker();
+
+      try {
+        appendLog(`[Job] Reading '${currentFile.name}' (${(currentFile.size / (1024 * 1024)).toFixed(2)} MB)...`);
+        const arrayBuffer = await currentFile.arrayBuffer();
+
+        const config = {
+          fileName: currentFile.name,
+          layoutId: selectedLayout.id,
+          channels: selectedLayout.channels,
+          bitDepth: parseInt(bitDepthSelect.value, 10),
+          sampleRate: parseInt(sampleRateSelect.value, 10),
+          jocGainDb: parseFloat(jocGainSelect.value),
+          swapSurrounds: swapSurroundsToggle.checked,
+          trimJocLatency: trimJocLatencyToggle.checked,
+          lfeLowPass: lfeLowPassToggle.checked
+        };
+
+        decoderWorker.postMessage(
+          {
+            type: 'DECODE_FILE',
+            payload: {
+              fileBuffer: arrayBuffer,
+              config
+            }
+          },
+          [arrayBuffer]
+        );
+      } catch (err) {
+        isProcessing = false;
+        speedBadgeWrapper.classList.remove('active');
+        setFileRowWaitingState(currentFile);
+        appendLog(`[Error] Failed to read input file: ${err.message}`);
+      }
     });
+
+    cancelDecodeBtn.addEventListener('click', () => {
+      if (decoderWorker) {
+        decoderWorker.terminate();
+        decoderWorker = null;
+      }
+      isProcessing = false;
+      speedBadgeWrapper.classList.remove('active');
+      if (currentFile) {
+        setFileRowWaitingState(currentFile);
+      }
+      appendLog('[Job] Decoding cancelled by user.');
+    });
+
+    // =========================================================================
+    // 5. RENDER DECODED AUDIO FILE CARD (DOWNLOAD + AUDIO PREVIEW)
+    // =========================================================================
+    function renderDecodedAudioCard(wavBlob, outputFileName, totalFrames, sizeMB) {
+      decodedCard.classList.add('visible');
+      const blobUrl = URL.createObjectURL(wavBlob);
+
+      const itemBox = document.createElement('div');
+      itemBox.className = 'decoded-item-box';
+      itemBox.innerHTML = `
+        <div class="decoded-filename" title="${outputFileName}">${outputFileName}</div>
+        <div class="decoded-frames-count">${totalFrames} frames</div>
+        <div class="download-btn-wrapper">
+          <a href="${blobUrl}" download="${outputFileName}" class="pill-btn-download">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            <span>Download • ${sizeMB} MB</span>
+          </a>
+        </div>
+        <div class="audio-player-container">
+          <audio controls preload="metadata" src="${blobUrl}"></audio>
+        </div>
+      `;
+
+      decodedItemsContainer.prepend(itemBox);
+    }
   </script>
 </body>
-</html>
+  </html>
