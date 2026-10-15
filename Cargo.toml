@@ -73,3 +73,9 @@ truehd = { git = "https://github.com/harletty/truehdd", rev = "5c8b880405946e7ff
 # partition seen, and keeps doing so.
 [profile.release.package.bridge-family-iamf]
 codegen-units = 1
+
+[workspace]
+members = [
+    # ... deja intactos los demás crates que ya aparecen en tu archivo ...
+    "wasm-decoder",
+]
