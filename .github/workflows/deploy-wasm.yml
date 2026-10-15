@@ -1,1 +1,53 @@
+name: Build and Deploy Harletty WASM Web Decoder
 
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Normalize folder structure if uploaded from mobile
+        run: |
+          mkdir -p wasm-decoder/src web/pkg
+          if [ -f "lib.rs" ] && [ ! -f "wasm-decoder/src/lib.rs" ]; then
+            mv lib.rs wasm-decoder/src/lib.rs
+          fi
+          if [ -f "wasm-decoder/lib.rs" ] && [ ! -f "wasm-decoder/src/lib.rs" ]; then
+            mv wasm-decoder/lib.rs wasm-decoder/src/lib.rs
+          fi
+          if [ -f "index.html" ] && [ ! -f "web/index.html" ]; then
+            mv index.html web/index.html
+          fi
+          if [ -f "worker.js" ] && [ ! -f "web/worker.js" ]; then
+            mv worker.js web/worker.js
+          fi
+
+      - name: Install Rust Toolchain with wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build Standalone WASM Decoder with SIMD128
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128 -C opt-level=3"
+        run: wasm-pack build wasm-decoder --target web --release --out-dir ../web/pkg
+
+      - name: Deploy to gh-pages branch automatically
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./web
