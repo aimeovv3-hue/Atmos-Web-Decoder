@@ -10,9 +10,9 @@
 
 use super::huffman::core_vlcs;
 use super::tables::{
-    ADPCM_VB, DMIXTABLE, HIGH_FREQ_VQ, INV_DMIXTABLE, JOINT_SCALE_FACTORS, LOSSLESS_QUANT,
-    LOSSY_QUANT, QUANT_INDEX_GROUP_SIZE, QUANT_INDEX_SEL_NBITS, QUANT_LEVELS, SCALE_FACTOR_ADJ,
-    SCALE_FACTOR_QUANT6, SCALE_FACTOR_QUANT7,
+    ADPCM_VB, BIT_RATES, DMIXTABLE, HIGH_FREQ_VQ, INV_DMIXTABLE, JOINT_SCALE_FACTORS,
+    LOSSLESS_QUANT, LOSSY_QUANT, QUANT_INDEX_GROUP_SIZE, QUANT_INDEX_SEL_NBITS, QUANT_LEVELS,
+    SCALE_FACTOR_ADJ, SCALE_FACTOR_QUANT6, SCALE_FACTOR_QUANT7,
 };
 use super::xll::crc16_ccitt;
 use crate::bitstream::BitReader;
@@ -340,9 +340,7 @@ impl CoreDecoder {
         self.predictor_history = info.predictor_history;
         self.crc_present = info.crc_present;
         self.audio_mode = info.audio_mode;
-        // bit_rate==3 marks the lossless quantizer; we don't parse br_code's
-        // exact value here (open core), default to lossy. (Affects only the
-        // step-size table selection; lossless core is rare.)
+        // Set from the header's rate code by skip_frame_header below.
         self.bit_rate_lossless = false;
         // A new access unit: any extension set is decoded after it.
         self.xxch_present = false;
@@ -375,7 +373,10 @@ impl CoreDecoder {
         rb(gb, 6)?; // audio_mode
         rb(gb, 4)?; // sr_code
         let br_code = rb(gb, 5)?;
-        self.bit_rate_lossless = br_code == 3;
+        // The lossless quantiser is selected by the rate the code names, not
+        // by the code: BIT_RATES[31] is the "lossless" sentinel 3, while code 3
+        // is 96 kb/s (ffmpeg dca_core.c: `s->bit_rate == 3`).
+        self.bit_rate_lossless = BIT_RATES[br_code as usize] == 3;
         rb1(gb)?; // reserved
         rb1(gb)?; // drc
         let _ts = rb1(gb)?;
