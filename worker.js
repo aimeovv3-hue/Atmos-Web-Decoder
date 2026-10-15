@@ -1,4 +1,3 @@
-// High-Speed Web Worker for Harletty WASM SIMD128 Decoder (7,000+ Frames/min)
 import init, {
   InitSession,
   RenderNextBatch,
@@ -41,8 +40,8 @@ self.onmessage = async (e) => {
         layoutKey,
         bitDepth,
         sampleRate,
-        1536, // Full E-AC-3 frame step for maximum SIMD throughput
-        0,    // Pure phase-locked VBAP (no artificial room delay)
+        1536,
+        0,
         gainDb,
         lfeSep
       );
@@ -69,7 +68,7 @@ self.onmessage = async (e) => {
       const pcmChunks = [];
       let totalPcmBytes = 0;
       const startTime = performance.now();
-      const stepBatch = batchFrames || 128; // 128 frames per WASM call -> >7000 frames/min
+      const stepBatch = batchFrames || 128;
 
       while (true) {
         const chunk = RenderNextBatch(stepBatch);
@@ -119,7 +118,7 @@ function buildMultichannelWavBlob(chunks, dataLength, numChannels, sampleRate, b
   writeStr(8, 'WAVE');
   writeStr(12, 'fmt ');
   view.setUint32(16, 16, true);
-  view.setUint16(20, bitDepth === 32 ? 3 : 1, true); // 3 = IEEE Float, 1 = PCM Int
+  view.setUint16(20, bitDepth === 32 ? 3 : 1, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, byteRate, true);
