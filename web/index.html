@@ -28,6 +28,7 @@
     .header {
       display: flex; align-items: center; justify-content: space-between;
       border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px;
+      flex-wrap: wrap; gap: 10px;
     }
     .header h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; }
     .badge {
@@ -74,7 +75,7 @@
     }
     .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
     .stats-bar {
-      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 14px;
     }
     .stat-box {
       background: var(--bg-input); border: 1px solid var(--border);
@@ -93,7 +94,7 @@
     pre.console {
       background: #070a12; border: 1px solid var(--border); border-radius: 8px;
       padding: 12px; font-size: 0.78rem; color: #a7f3d0; font-family: monospace;
-      max-height: 180px; overflow-y: auto; white-space: pre-wrap; margin-top: 12px;
+      max-height: 200px; overflow-y: auto; white-space: pre-wrap; margin-top: 12px;
     }
   </style>
 </head>
@@ -292,10 +293,32 @@
       "1.0": { desc: "1.0 Mono — 1 Channel", ch: ["FC"] }
     };
 
+    const fileInput = document.getElementById("fileInput");
+    const codecSelect = document.getElementById("codecSelect");
+    const presentationSelect = document.getElementById("presentationSelect");
     const layoutSelect = document.getElementById("layoutSelect");
+    const bitDepthSelect = document.getElementById("bitDepthSelect");
+    const sampleRateSelect = document.getElementById("sampleRateSelect");
+    const batchSpeedSelect = document.getElementById("batchSpeedSelect");
+    const drcSelect = document.getElementById("drcSelect");
+    const gainInput = document.getElementById("gainInput");
     const swapCheck = document.getElementById("swapSurroundsCheck");
+    const trimLatencyCheck = document.getElementById("trimLatencyCheck");
+    const lfeSepCheck = document.getElementById("lfeSepCheck");
     const layoutTitleText = document.getElementById("layoutTitleText");
     const channelPills = document.getElementById("channelPills");
+    const decodeBtn = document.getElementById("decodeBtn");
+    const consoleBox = document.getElementById("consoleBox");
+    const framesStat = document.getElementById("framesStat");
+    const fpsStat = document.getElementById("fpsStat");
+    const fpmStat = document.getElementById("fpmStat");
+    const etaStat = document.getElementById("etaStat");
+    const progressFill = document.getElementById("progressFill");
+
+    function logLine(msg) {
+      consoleBox.textContent += "\n" + msg;
+      consoleBox.scrollTop = consoleBox.scrollHeight;
+    }
 
     function updateLayoutPreview() {
       const spec = LAYOUT_SPECS[layoutSelect.value] || LAYOUT_SPECS["9.1.6"];
@@ -320,6 +343,83 @@
     layoutSelect.addEventListener("change", updateLayoutPreview);
     swapCheck.addEventListener("change", updateLayoutPreview);
     updateLayoutPreview();
+
+    let worker = null;
+
+    decodeBtn.addEventListener("click", async () => {
+      const file = fileInput.files?.[0];
+      if (!file) {
+        logLine("[Error] Please select an audio file (.m4a, .ec3, .thd, .mlp) first.");
+        return;
+      }
+
+      decodeBtn.disabled = true;
+      progressFill.style.width = "0%";
+      logLine(`[Job] Reading '${file.name}' (${(file.size / (1024 * 1024)).toFixed(2)} MB)...`);
+
+      const arrayBuffer = await file.arrayBuffer();
+
+      const flags = [layoutSelect.value];
+      if (swapCheck.checked) flags.push("ss");
+      flags.push(`codec=${codecSelect.value}`);
+      flags.push(`drc=${drcSelect.value}`);
+      flags.push(`lat=${trimLatencyCheck.checked ? 1 : 0}`);
+      flags.push(`pres=${presentationSelect.value}`);
+      const fullLayoutKey = flags.join("|");
+
+      if (worker) worker.terminate();
+      worker = new Worker("./worker.js", { type: "module" });
+
+      worker.onmessage = (e) => {
+        const data = e.data;
+        if (data.type === "INIT_OK") {
+          logLine(data.logMsg);
+          framesStat.textContent = `0 / ${data.totalFrames}`;
+        } else if (data.type === "PROGRESS") {
+          const pct = Math.min(100, (data.processed / Math.max(1, data.totalFrames)) * 100);
+          progressFill.style.width = `${pct.toFixed(1)}%`;
+          framesStat.textContent = `${data.processed} / ${data.totalFrames}`;
+          fpsStat.textContent = `${data.fps} FPS`;
+          fpmStat.textContent = `${data.fpm.toLocaleString()} / min`;
+          const remFrames = Math.max(0, data.totalFrames - data.processed);
+          const etaSec = data.fps > 0 ? (remFrames / data.fps).toFixed(1) : "0.0";
+          etaStat.textContent = `${data.elapsedSec.toFixed(1)}s (ETA ${etaSec}s)`;
+        } else if (data.type === "DONE") {
+          progressFill.style.width = "100%";
+          decodeBtn.disabled = false;
+          const baseName = file.name.replace(/\.[^/.]+$/, "");
+          const outName = `${baseName}_${layoutSelect.value.replace(/\s+/g, "_")}_${bitDepthSelect.value}bit.wav`;
+          logLine(`[Success] Export ready: ${outName}`);
+          const url = URL.createObjectURL(data.wavBlob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = outName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        } else if (data.type === "ERROR") {
+          decodeBtn.disabled = false;
+          logLine(`[Error] ${data.error}`);
+        }
+      };
+
+      worker.postMessage(
+        {
+          type: "DECODE_FILE",
+          payload: {
+            fileBytes: arrayBuffer,
+            fileName: file.name,
+            layoutKey: fullLayoutKey,
+            bitDepth: parseInt(bitDepthSelect.value, 10),
+            sampleRate: parseInt(sampleRateSelect.value, 10),
+            batchFrames: parseInt(batchSpeedSelect.value, 10),
+            gainDb: parseFloat(gainInput.value || "0"),
+            lfeSep: lfeSepCheck.checked
+          }
+        },
+        [arrayBuffer]
+      );
+    });
   </script>
 </body>
 </html>
