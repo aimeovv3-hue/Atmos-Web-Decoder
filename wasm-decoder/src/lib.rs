@@ -1088,3 +1088,78 @@ fn build_speaker_layout(layout_key: &str, swap_surrounds: bool) -> (Vec<Speaker>
 
     (swapped, direct_objects)
 }
+
+// Reemplaza la función extract_stream_packets en tu src/lib.rs por esta versión segura:
+fn extract_stream_packets(data: &[u8]) -> Vec<(usize, usize)> {
+    let len = data.len();
+    let mut mdat_ranges = Vec::new();
+    let mut pos = 0usize;
+
+    while pos + 8 <= len {
+        let size32 = u32::from_be_bytes([
+            data[pos],
+            data[pos + 1],
+            data[pos + 2],
+            data[pos + 3],
+        ]) as usize;
+        let box_type = &data[pos + 4..pos + 8];
+
+        let (box_size, header_len) = if size32 == 1 {
+            if pos + 16 > len {
+                break;
+            }
+            let size64 = u64::from_be_bytes([
+                data[pos + 8],
+                data[pos + 9],
+                data[pos + 10],
+                data[pos + 11],
+                data[pos + 12],
+                data[pos + 13],
+                data[pos + 14],
+                data[pos + 15],
+            ]) as usize;
+            (size64, 16usize)
+        } else if size32 == 0 {
+            // Crítico: size == 0 significa hasta el final del archivo (evita bucle infinito offset += 0)
+            (len - pos, 8usize)
+        } else {
+            (size32, 8usize)
+        };
+
+        if box_size < header_len || pos + box_size > len {
+            break;
+        }
+
+        if box_type == b"mdat" {
+            mdat_ranges.push((pos + header_len, pos + box_size));
+        }
+
+        pos += box_size;
+    }
+
+    if mdat_ranges.is_empty() {
+        mdat_ranges.push((0, len));
+    }
+
+    let mut packets = Vec::with_capacity(8192);
+    for (start, end) in mdat_ranges {
+        let mut i = start;
+        while i + 6 < end {
+            if data[i] == 0x0B && data[i + 1] == 0x77 {
+                let bsid = (data[i + 5] >> 3) & 0x1F;
+                if (11..=16).contains(&bsid) {
+                    let frmsiz = (((data[i + 2] & 0x07) as usize) << 8) | (data[i + 3] as usize);
+                    let frame_bytes = (frmsiz + 1) * 2;
+                    if frame_bytes >= 16 && i + frame_bytes <= end {
+                        packets.push((i, frame_bytes));
+                        i += frame_bytes;
+                        continue;
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+
+    packets
+}
